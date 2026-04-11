@@ -1,8 +1,8 @@
 node_modules/
 venv/
 __pycache__/
-# *.sqlite3
-# *.wav
-# *.mp3
+*.sqlite3
+*.wav
+*.mp3
 .DS_Store
 .env
