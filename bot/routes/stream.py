@@ -91,14 +91,23 @@ async def plivo_stream(websocket: WebSocket):
             if agent:
                 greeting = agent["greeting"]
                 system_prompt_override = agent["system_prompt"]
-                skus_str = ", ".join(local_call_data["skus"])
-                current_time_str = local_call_data["current_time"]
                 
-                system_prompt_override = system_prompt_override.replace(
-                    "*** OBJECTIVE:", 
-                    f"*** SKUS FOR THIS CALL (ASK EXACTLY THESE): {skus_str}\n*** CURRENT TIME: {current_time_str}\n\n*** OBJECTIVE:"
-                )
-                log.info(f"[AGENT] Injected user SKUs into DB prompt: {skus_str}")
+                # Mode Detection: Only inject SKUs if they exist
+                skus = local_call_data.get("skus", [])
+                if skus:
+                    skus_str = ", ".join(skus)
+                    current_time_str = local_call_data["current_time"]
+                    # Only replace if the marker exists, otherwise just append
+                    marker = "*** OBJECTIVE:"
+                    sku_info = f"*** SKUS FOR THIS CALL (ASK EXACTLY THESE): {skus_str}\n*** CURRENT TIME: {current_time_str}\n\n"
+                    if marker in system_prompt_override:
+                        system_prompt_override = system_prompt_override.replace(marker, f"{sku_info}{marker}")
+                    else:
+                        system_prompt_override = f"{sku_info}{system_prompt_override}"
+                    log.info(f"[AGENT] Inventory Mode: Injected SKUs: {skus_str}")
+                else:
+                    log.info(f"[AGENT] Generic Mode: Using raw Dashboard prompt.")
+                
                 update_call(call_id, status="in-progress", started_at=datetime.utcnow().isoformat() + "Z")
 
                 try:
@@ -141,6 +150,7 @@ async def plivo_stream(websocket: WebSocket):
     filler_cache = {}
     stream_sid = None
     last_bot_response = greeting
+    is_generic_agent = len(local_call_data.get("skus", [])) == 0
     call_state = INTRO
     interrupt_event = asyncio.Event()
     session = aiohttp.ClientSession()
@@ -253,7 +263,8 @@ async def plivo_stream(websocket: WebSocket):
         llm_start = time.time()
         full_resp, next_state, terminate_call, stock = await get_agent_response(
             call_state, last_bot_response, history, text, local_call_data, last_stock,
-            system_prompt_override=system_prompt_override
+            system_prompt_override=system_prompt_override,
+            is_generic=is_generic_agent
         )
         if stock:
             last_stock.update(stock)  # MERGE — never overwrite previous SKU values

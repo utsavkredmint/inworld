@@ -76,7 +76,8 @@ async def get_agent_response(
     user_text,
     call_data,
     current_stock,
-    system_prompt_override=None
+    system_prompt_override=None,
+    is_generic=False # New flag to bypass inventory logic
 ):
     hist_str = ""
     for h in history[-5:]:
@@ -96,16 +97,26 @@ async def get_agent_response(
     try:
         prompt = system_prompt_override if system_prompt_override else build_agent_prompt(call_data)
 
-        # 🔥 ADDITIONAL STRICT RULES (runtime safety)
-        prompt += """
-
+        if not is_generic:
+            # 🔥 INVENTORY SPECIFIC RULES
+            prompt += """
 *** CRITICAL RUNTIME RULES:
 1. NEVER repeat last bot message.
 2. NEVER ask same SKU again.
 3. If all SKUs filled → terminate true.
 4. If user exit intent → terminate true.
-5. Always return valid JSON.
 """
+        else:
+            # 🔥 GENERIC AGENT RULES
+            prompt += """
+*** RUNTIME RULES:
+1. Follow the OBJECTIVE strictly.
+2. Keep responses natural and conversational.
+3. If user wants to end → set "terminate": true.
+"""
+
+        # ALWAYS required for either type
+        prompt += '\n*** FORMAT: JSON ONLY\n{"response": "reply", "state": "current_state", "terminate": false, "stock": {}}\n'
 
         comp = await groq_client.chat.completions.create(
             model="llama-3.1-8b-instant",
@@ -151,24 +162,26 @@ async def get_agent_response(
                 log.warning("Asking already filled SKU → fixing")
                 return ("धन्यवाद, आपका दिन शुभ हो।", state, True, current_stock)
 
-        # merge stock safely
-        updated_stock = current_stock.copy()
+        # merge stock safely (Only for inventory agents)
+        if not is_generic:
+            updated_stock = current_stock.copy()
+            expected_skus = call_data.get("skus", [])
+            for sku in expected_skus:
+                if sku not in updated_stock:
+                    updated_stock[sku] = None
+
+            for k, v in stock.items():
+                if updated_stock.get(k) is None:
+                    updated_stock[k] = v
+
+            # 🚨 AUTO CLOSE: only for inventory bots
+            if expected_skus and all(updated_stock.get(sku) is not None for sku in expected_skus):
+                return ("धन्यवाद, आपका दिन शुभ हो।", state, True, updated_stock)
+            
+            return (response, next_state, terminate, updated_stock)
         
-        # Ensure all expected SKUs exist in the stock dict with at least None values
-        expected_skus = call_data.get("skus", [])
-        for sku in expected_skus:
-            if sku not in updated_stock:
-                updated_stock[sku] = None
-
-        for k, v in stock.items():
-            if updated_stock.get(k) is None:
-                updated_stock[k] = v
-
-        # 🚨 HARD GUARD 4: auto close if all filled
-        if expected_skus and all(updated_stock.get(sku) is not None for sku in expected_skus):
-            return ("धन्यवाद, आपका दिन शुभ हो।", state, True, updated_stock)
-
-        return (response, next_state, terminate, updated_stock)
+        # For Generic Agents, just return the raw response
+        return (response, next_state, terminate, {})
 
     except Exception as e:
         log.error(f"LLM error: {e} | raw: {raw if raw else 'None'}")
