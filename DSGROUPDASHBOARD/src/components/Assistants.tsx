@@ -43,6 +43,7 @@ export function Assistants() {
   const [agentPersona, setAgentPersona] = useState('');
   const [llmPrompt, setLlmPrompt] = useState('');
   const [selectedVoice, setSelectedVoice] = useState<string>('Riya');
+  const [selectedLanguage, setSelectedLanguage] = useState<string>('hi');
   const [selectedKB, setSelectedKB] = useState<string>('');
   const [kbSearch, setKbSearch] = useState('');
 
@@ -99,6 +100,7 @@ export function Assistants() {
     setAgentPersona(bot.persona || '');
     setLlmPrompt(bot.system_prompt);
     setSelectedVoice(bot.voice || 'Riya');
+    setSelectedLanguage(bot.language || 'hi');
     setView('create');
   };
 
@@ -110,7 +112,7 @@ export function Assistants() {
         system_prompt: llmPrompt,
         persona: agentPersona,
         voice: selectedVoice,
-        language: 'hi',
+        language: selectedLanguage,
       };
 
       if (editingId) {
@@ -135,6 +137,7 @@ export function Assistants() {
     setAgentPersona('');
     setLlmPrompt('');
     setSelectedVoice('Riya');
+    setSelectedLanguage('hi');
     setSelectedKB('');
   };
 
@@ -252,6 +255,32 @@ export function Assistants() {
               ))}
             </div>
             <p className="text-[10px] text-zinc-400">Choose between the standard AI voice or your custom cloned voices.</p>
+          </div>
+
+          {/* Language Selection */}
+          <div className="space-y-3">
+            <label className="text-xs font-bold text-zinc-400 uppercase tracking-widest">Fixed Language</label>
+            <div className="flex gap-3">
+              {[
+                { id: 'hi', name: 'Hindi' },
+                { id: 'en', name: 'English' },
+                { id: 'hinglish', name: 'Hinglish' }
+              ].map(lang => (
+                <button
+                  key={lang.id}
+                  type="button"
+                  onClick={() => setSelectedLanguage(lang.id)}
+                  className={cn(
+                    "px-6 py-2.5 rounded-xl border text-sm font-medium transition-all flex items-center gap-2",
+                    selectedLanguage === lang.id ? "bg-orange-500 text-white border-orange-600 shadow-md shadow-orange-500/20" : "bg-white text-zinc-600 border-zinc-200 hover:border-zinc-300"
+                  )}
+                >
+                  {lang.name}
+                  {selectedLanguage === lang.id && <Check className="w-3.5 h-3.5" />}
+                </button>
+              ))}
+            </div>
+            <p className="text-[10px] text-zinc-400">Lock the agent to a specific language to prevent accent mixing.</p>
           </div>
 
           {/* LLM Prompt */}
