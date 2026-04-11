@@ -24,14 +24,20 @@ plivo_client = RestClient(auth_id=PLIVO_AUTH_ID, auth_token=PLIVO_AUTH_TOKEN)
 
 @router.websocket("/api/plivo/stream")
 async def plivo_stream(websocket: WebSocket):
+    log.info("[STREAM] Incoming WebSocket connection attempt...")
     query_params = dict(websocket.query_params)
     call_uuid = query_params.get("call_uuid")
     call_id = query_params.get("call_id", "")
     to_number = query_params.get("to_number", "").replace(" ", "+")
+    log.info(f"[STREAM] Params: uuid={call_uuid}, id={call_id}, num={to_number}")
+    log.info(f"[STREAM] Starting session for call_uuid={call_uuid} and call_id={call_id}")
+    
     start_connect = time.time()
     try:
         await websocket.accept()
-    except:
+        log.info(f"[STREAM] WebSocket ACCEPTED for {call_uuid}")
+    except Exception as e:
+        log.error(f"[STREAM] Failed to accept WebSocket: {e}")
         return
 
     log.info(f"Socket Active for {call_uuid} (call_id={call_id})")
