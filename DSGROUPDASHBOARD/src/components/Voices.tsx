@@ -6,6 +6,7 @@ export function Voices() {
   const [voices, setVoices] = useState<Voice[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isCloning, setIsCloning] = useState(false);
+  const [testingVoiceId, setTestingVoiceId] = useState<string | null>(null);
   const [showCloneModal, setShowCloneModal] = useState(false);
   
   // Form state
@@ -25,6 +26,23 @@ export function Voices() {
       console.error('Failed to load voices:', error);
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleTestVoice = async (voiceId: string) => {
+    if (testingVoiceId) return;
+    setTestingVoiceId(voiceId);
+    try {
+      const blob = await api.testVoice(voiceId);
+      const url = URL.createObjectURL(blob);
+      const audio = new Audio(url);
+      audio.onended = () => URL.revokeObjectURL(url);
+      await audio.play();
+    } catch (error) {
+      console.error('Test voice failed:', error);
+      alert('Failed to generate test audio.');
+    } finally {
+      setTestingVoiceId(null);
     }
   };
 
@@ -132,9 +150,17 @@ export function Voices() {
                     {voice.ref_audio_path.split('/').pop()}
                   </span>
                 </div>
-                <button className="flex items-center gap-2 px-3 py-1.5 bg-zinc-900 text-white rounded-lg text-xs font-bold hover:bg-zinc-800 transition-colors active:scale-95 disabled:opacity-50">
-                  <Play className="w-3 h-3 fill-current" />
-                  Test Voice
+                <button 
+                  disabled={testingVoiceId === voice.id}
+                  onClick={() => handleTestVoice(voice.id)}
+                  className="flex items-center gap-2 px-3 py-1.5 bg-zinc-900 text-white rounded-lg text-xs font-bold hover:bg-zinc-800 transition-colors active:scale-95 disabled:opacity-50"
+                >
+                  {testingVoiceId === voice.id ? (
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                  ) : (
+                    <Play className="w-3 h-3 fill-current" />
+                  )}
+                  {testingVoiceId === voice.id ? 'Testing...' : 'Test Voice'}
                 </button>
               </div>
             </div>

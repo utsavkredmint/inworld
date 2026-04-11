@@ -151,4 +151,10 @@ export const api = {
 
   deleteVoice: (id: string) =>
     fetch(`${VOICES_BASE}/${id}`, { method: "DELETE" }).then(res => res.json()),
+
+  async testVoice(id: string) {
+    const response = await fetch(`${VOICES_BASE}/${id}/test`);
+    if (!response.ok) throw new Error('Generation failed');
+    return response.blob();
+  }
 };

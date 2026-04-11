@@ -81,12 +81,27 @@ def resample_and_to_mulaw(audio_tensor, orig_sr=24000, target_sr=8000):
         audio = resampler(audio)
     
     # 3. Convert to PCM 16-bit
-    # audio is in range [-1, 1]
     pcm16 = (audio * 32767).to(torch.int16).numpy().tobytes()
     
     # 4. Convert PCM to mu-law 8kHz
     mulaw = audioop.lin2ulaw(pcm16, 2)
     return mulaw
+
+def tensor_to_wav(audio_tensor, sr=24000):
+    """Convert OmniVoice output (Tensor) to WAV bytes for browser playback."""
+    import scipy.io.wavfile
+    import io
+    
+    audio = audio_tensor.detach().cpu()
+    if audio.dim() > 1:
+        audio = audio.squeeze(0)
+    
+    # Ensure range is [-1, 1]
+    audio = torch.clamp(audio, -1, 1)
+    
+    buffer = io.BytesIO()
+    scipy.io.wavfile.write(buffer, sr, audio.numpy())
+    return buffer.getvalue()
 
 def _resolve_audio_path(path):
     """Helper to handle absolute paths from different machines."""

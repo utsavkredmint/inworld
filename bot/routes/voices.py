@@ -3,8 +3,10 @@ import shutil
 import uuid
 import logging
 from typing import Optional
-from fastapi import APIRouter, UploadFile, File, Form, HTTPException
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Response
 from database import create_voice, list_voices, delete_voice, get_voice
+from services.tts import _get_model, _resolve_audio_path, tensor_to_wav, DEFAULT_REF_TEXT
+import asyncio
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/voices", tags=["voices"])
@@ -69,3 +71,37 @@ async def remove_voice(voice_id: str):
     delete_voice(voice_id)
     log.info(f"[VOICES] Deleted voice: {voice_id}")
     return {"status": "success"}
+
+@router.get("/{voice_id}/test")
+async def test_voice(voice_id: str, text: Optional[str] = None):
+    """Generate a test audio clip for a voice and return it as WAV."""
+    voice = get_voice(voice_id)
+    if not voice:
+        raise HTTPException(status_code=404, detail="Voice not found")
+
+    model = await _get_model()
+    if not model:
+        raise HTTPException(status_code=500, detail="TTS model not available")
+
+    # Use provided text or default
+    sample_text = text or f"Hello! This is a test of the {voice['name']} voice. I hope you like how I sound!"
+    ref_audio = _resolve_audio_path(voice["ref_audio_path"])
+    ref_text = voice["ref_text"] or DEFAULT_REF_TEXT
+
+    try:
+        log.info(f"[VOICES] Generating test clip for {voice_id}...")
+        loop = asyncio.get_event_loop()
+        audio_list = await loop.run_in_executor(None, lambda: model.generate(
+            text=sample_text,
+            ref_audio=ref_audio,
+            ref_text=ref_text
+        ))
+        
+        if not audio_list or len(audio_list) == 0:
+            raise HTTPException(status_code=500, detail="Failed to generate audio")
+            
+        wav_bytes = tensor_to_wav(audio_list[0])
+        return Response(content=wav_bytes, media_type="audio/wav")
+    except Exception as e:
+        log.error(f"[VOICES] Test generation error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
