@@ -145,34 +145,10 @@ async def omnivoice_tts(text, voice_id=None, language="hindi"):
             ref_audio = _resolve_audio_path(voice["ref_audio_path"])
             ref_text = voice["ref_text"] or DEFAULT_REF_TEXT
 
-    # Optimization: Automatically trim reference audio if it's too long
-    # This is the biggest latency killer. 10s is plenty for quality.
-    try:
-        from pydub import AudioSegment
-        # We use a cache for the trimmed version to avoid re-trimming
-        # The trimmed files will be saved in voices/trimmed/
-        trimmed_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "voices", "trimmed")
-        if not os.path.exists(trimmed_dir):
-            os.makedirs(trimmed_dir)
-            
-        base_name = os.path.basename(ref_audio)
-        trimmed_path = os.path.join(trimmed_dir, f"t10_{base_name}")
-        
-        if not os.path.exists(trimmed_path):
-            audio = AudioSegment.from_file(ref_audio)
-            if len(audio) > 10000: # If longer than 10s
-                log.info(f"[TTS] Trimming reference audio {base_name} to 10s for speed.")
-                trimmed = audio[:10000]
-                trimmed.export(trimmed_path, format="wav") # Save as WAV for best quality
-            else:
-                # If already short, just use original or symlink
-                trimmed_path = ref_audio
-        
-        # Use the trimmed path for generation
-        ref_audio = trimmed_path
-    except Exception as e:
-        log.warning(f"[TTS] Could not trim audio: {e}. Using original.")
-
+    # IMPORTANT: We removed auto-trimming because it caused a mismatch with ref_text
+    # which made the model 'mix' the audio. 
+    # USER ACTION: Please provide a shorter reference audio (5-8 seconds) for best speed.
+    
     log.info(f"[TTS] Synthesizing with voice: {voice_id or 'default'} in language: {language}")
     
     start = time.time()
