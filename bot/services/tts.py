@@ -145,11 +145,41 @@ async def omnivoice_tts(text, voice_id=None, language="hindi"):
             ref_audio = _resolve_audio_path(voice["ref_audio_path"])
             ref_text = voice["ref_text"] or DEFAULT_REF_TEXT
 
-    # IMPORTANT: We removed auto-trimming because it caused a mismatch with ref_text
-    # which made the model 'mix' the audio. 
-    # USER ACTION: Please provide a shorter reference audio (5-8 seconds) for best speed.
-    
-    log.info(f"[TTS] Synthesizing with voice: {voice_id or 'default'} in language: {language}")
+    # Optimization: Automatically trim reference audio if it's too long
+    # This is the biggest latency killer. 5s is plenty for quality.
+    # We ALSO trim the text proportionally to prevent 'mixing' or repetition.
+    try:
+        from pydub import AudioSegment
+        trimmed_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "voices", "trimmed")
+        if not os.path.exists(trimmed_dir):
+            os.makedirs(trimmed_dir)
+            
+        base_name = os.path.basename(ref_audio)
+        trimmed_path = os.path.join(trimmed_dir, f"v2_t5_{base_name}")
+        
+        if not os.path.exists(trimmed_path):
+            audio = AudioSegment.from_file(ref_audio)
+            original_duration_ms = len(audio)
+            
+            if original_duration_ms > 5000: # If longer than 5s
+                log.info(f"[TTS] Trimming reference audio {base_name} to 5s and aligning text.")
+                trimmed = audio[:5000]
+                trimmed.export(trimmed_path, format="wav")
+                
+                # Align text: if we take 5s out of 22s, we take ~23% of text
+                ratio = 5000 / original_duration_ms
+                words = ref_text.split()
+                num_words = max(1, int(len(words) * ratio))
+                ref_text = " ".join(words[:num_words])
+                log.info(f"[TTS] Aligned ref_text to: {ref_text[:30]}...")
+            else:
+                trimmed_path = ref_audio
+        
+        ref_audio = trimmed_path
+    except Exception as e:
+        log.warning(f"[TTS] Could not align audio: {e}. Using original.")
+
+    log.info(f"[TTS] Synthesizing with voice: {voice_id or 'default'} in status: {language}")
     
     start = time.time()
     try:
@@ -159,7 +189,8 @@ async def omnivoice_tts(text, voice_id=None, language="hindi"):
             text=text,
             ref_audio=ref_audio,
             ref_text=ref_text,
-            language=language or "hindi"
+            language=language or "hindi",
+            num_inference_steps=20 # Ultra-speed mode
         ))
         
         if not audio_list or len(audio_list) == 0:

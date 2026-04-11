@@ -152,7 +152,7 @@ async def plivo_stream(websocket: WebSocket):
     # 🌍 Voice & Language Identity
     agent_language = agent.get("language", "hindi") if agent else "hindi"
     voice_id = agent.get("voice") if agent else None
-    log.info(f"[IDENTITY] Call initialized with Voice={voice_id}, Language={agent_language}")
+    log.info(f"[TTS] Synthesizing with voice: {voice_id or 'default'} in language: {agent_language}")
 
     async def speak(text):
         nonlocal is_speaking, speak_start_ts
@@ -320,12 +320,16 @@ async def plivo_stream(websocket: WebSocket):
             "अच्छा",
             "धन्यवाद"
         ]
-        log.info(f"[CACHE] Pre-generating TTS for {len(templates)} phrases...")
-        # Pre-cache in background
-        tasks = [omnivoice_tts(t, voice_id=voice_id, language=agent_language) for t in templates]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        hits = sum(1 for r in results if r and not isinstance(r, Exception))
-        log.info(f"[CACHE] Pre-cached {hits}/{len(templates)} phrases")
+        log.info(f"[CACHE] Pre-generating TTS for {len(templates)} phrases SEQUENTIALLY...")
+        # Sequential pre-caching to avoid GPU overloading
+        for t in templates:
+            try:
+                # Add a small delay between tasks to prioritize real-time replies
+                await asyncio.sleep(0.5)
+                await omnivoice_tts(t, voice_id=voice_id, language=agent_language)
+            except Exception as e:
+                log.warning(f"[CACHE] Pre-cache failed for '{t}': {e}")
+        log.info("[CACHE] Background pre-caching complete.")
 
     async def _init_and_greet():
         # 🔗 Start setup (ONLY if not already pre-connected)
