@@ -167,11 +167,12 @@ async def omnivoice_tts(text, voice_id=None, language="hindi"):
                 trimmed.export(trimmed_path, format="wav")
                 
                 # Align text: if we take 5s out of 22s, we take ~23% of text
+                # We ensure we cut at a 'space' so we don't have partial words
                 ratio = 5000 / original_duration_ms
                 words = ref_text.split()
                 num_words = max(1, int(len(words) * ratio))
                 ref_text = " ".join(words[:num_words])
-                log.info(f"[TTS] Aligned ref_text to: {ref_text[:30]}...")
+                log.info(f"[TTS] Aligned ref_text ({num_words} words): {ref_text[:40]}...")
             else:
                 trimmed_path = ref_audio
         
@@ -179,7 +180,7 @@ async def omnivoice_tts(text, voice_id=None, language="hindi"):
     except Exception as e:
         log.warning(f"[TTS] Could not align audio: {e}. Using original.")
 
-    log.info(f"[TTS] Synthesizing with voice: {voice_id or 'default'} in status: {language}")
+    log.info(f"[TTS] Synthesizing with voice: {voice_id or 'default'} in language: {language}")
     
     start = time.time()
     try:
@@ -190,7 +191,7 @@ async def omnivoice_tts(text, voice_id=None, language="hindi"):
             ref_audio=ref_audio,
             ref_text=ref_text,
             language=language or "hindi",
-            num_inference_steps=20 # Ultra-speed mode
+            num_inference_steps=30 # Balanced quality and speed
         ))
         
         if not audio_list or len(audio_list) == 0:
