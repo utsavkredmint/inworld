@@ -138,6 +138,8 @@ async def plivo_stream(websocket: WebSocket):
 
     history = []
     is_speaking = False
+    filler_cache = {}
+    stream_sid = None
     last_bot_response = greeting
     call_state = INTRO
     interrupt_event = asyncio.Event()
@@ -154,7 +156,22 @@ async def plivo_stream(websocket: WebSocket):
     voice_id = agent.get("voice") if agent else None
     log.info(f"[TTS] Synthesizing with voice: {voice_id or 'default'} in language: {agent_language}")
 
-    async def speak(text):
+    # ── Internal Helpers ──
+    async def _play_filler():
+        if not filler_cache: return
+        import random
+        choice = random.choice(list(filler_cache.keys()))
+        audio = filler_cache[choice]
+        log.info(f"[FILLER] Injecting instant filler: '{choice}'")
+        payload = base64.b64encode(audio).decode("utf-8")
+        msg = {
+            "event": "media",
+            "media": {"payload": payload}
+        }
+        if stream_sid: msg["streamSid"] = stream_sid
+        await websocket.send_text(json.dumps(msg))
+
+    async def speak(text, is_filler=False):
         nonlocal is_speaking, speak_start_ts
         tts_start = time.time()
         is_speaking = True
@@ -170,14 +187,12 @@ async def plivo_stream(websocket: WebSocket):
             log.info(f"[SPEAK] Cache HIT for: {text[:40]}")
             # Send cached audio immediately
             try:
-                await websocket.send_text(json.dumps({
-                    "event": "playAudio",
-                    "media": {
-                        "contentType": "audio/x-mulaw",
-                        "sampleRate": "8000",
-                        "payload": base64.b64encode(audio).decode()
-                    }
-                }))
+                msg = {
+                    "event": "media",
+                    "media": {"payload": base64.b64encode(audio).decode()}
+                }
+                if stream_sid: msg["streamSid"] = stream_sid
+                await websocket.send_text(json.dumps(msg))
             except:
                 pass
         else:
@@ -190,14 +205,12 @@ async def plivo_stream(websocket: WebSocket):
                 audio = await omnivoice_tts(text, voice_id=voice_id, language=agent_language)
                 if audio:
                     try:
-                        await websocket.send_text(json.dumps({
-                            "event": "playAudio",
-                            "media": {
-                                "contentType": "audio/x-mulaw",
-                                "sampleRate": "8000",
-                                "payload": base64.b64encode(audio).decode()
-                            }
-                        }))
+                        msg = {
+                            "event": "media",
+                            "media": {"payload": base64.b64encode(audio).decode()}
+                        }
+                        if stream_sid: msg["streamSid"] = stream_sid
+                        await websocket.send_text(json.dumps(msg))
                     except:
                         pass
 
@@ -364,6 +377,15 @@ async def plivo_stream(websocket: WebSocket):
         
         # Pre-cache in background while greeting plays
         asyncio.create_task(_pre_cache_skus())
+        
+        # Pre-generate Fillers for 100ms latency
+        fillers = ["जी", "जी बताइए", "जी देख रही हूँ"]
+        for f in fillers:
+            try:
+                audio = await omnivoice_tts(f, voice_id=voice_id, language=agent_language)
+                if audio: filler_cache[f] = audio
+            except: pass
+        log.info(f"[CACHE] Ready with {len(filler_cache)} instant fillers")
 
     asyncio.create_task(_init_and_greet())
 
@@ -390,6 +412,10 @@ async def plivo_stream(websocket: WebSocket):
                     continue
 
                 msg = json.loads(raw)
+                if msg.get("event") == "start":
+                    stream_sid = msg.get("start", {}).get("streamSid")
+                    log.info(f"[PLIVO] Stream started: {stream_sid}")
+                
                 if msg.get("event") == "media":
                     payload = msg.get("media", {}).get("payload", "")
                     if payload:
@@ -437,6 +463,11 @@ async def plivo_stream(websocket: WebSocket):
                     else:
                         log.info(f"[SKIP] Short utterance while bot speaking: '{text}' — not interrupting")
                         continue  # Don't process short acknowledgments during bot speech
+
+                # 🚀 Instant Filler Logic
+                # Play filler immediately if we have text and user stopped talking
+                if text and not is_speaking:
+                    asyncio.create_task(_play_filler())
 
                 # Process the transcript
                 result = await _process_text(text)
