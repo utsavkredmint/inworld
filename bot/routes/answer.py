@@ -10,14 +10,17 @@ router = APIRouter()
 
 @router.api_route("/api/plivo/answer", methods=["GET", "POST"], response_class=PlainTextResponse)
 async def plivo_answer(request: Request):
+    log.info(f"[ANSWER] Incoming request from Plivo: {request.method}")
+    
+    # Try to get params from query string or form data
     params = dict(request.query_params)
-    if not params:
+    if request.method == "POST":
         try:
-            body = await request.form()
-            params = dict(body)
-        except:
-            pass
-
+            form_data = await request.form()
+            params.update(dict(form_data))
+        except Exception as e:
+            log.warning(f"[ANSWER] Could not parse form data: {e}")
+            
     call_uuid = params.get("CallUUID", "unknown")
     to_number = params.get("To", "").replace(" ", "+")
     ws_url = SERVER_URL.replace("https://", "wss://").replace("http://", "ws://")
