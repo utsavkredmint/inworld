@@ -161,18 +161,13 @@ async def omnivoice_tts(text, voice_id=None, language="hindi"):
             audio = AudioSegment.from_file(ref_audio)
             original_duration_ms = len(audio)
             
-            if original_duration_ms > 5000: # If longer than 5s
-                log.info(f"[TTS] Trimming reference audio {base_name} to 5s and aligning text.")
-                trimmed = audio[:5000]
+            if original_duration_ms > 8000: # Increase to 8s for more 'cloning context'
+                log.info(f"[TTS] Trimming reference audio {base_name} to 8s to preserve native accent.")
+                trimmed = audio[:8000]
                 trimmed.export(trimmed_path, format="wav")
-                
-                # Align text: if we take 5s out of 22s, we take ~23% of text
-                # We ensure we cut at a 'space' so we don't have partial words
-                ratio = 5000 / original_duration_ms
-                words = ref_text.split()
-                num_words = max(1, int(len(words) * ratio))
-                ref_text = " ".join(words[:num_words])
-                log.info(f"[TTS] Aligned ref_text ({num_words} words): {ref_text[:40]}...")
+                # We do NOT cut ref_text by ratio anymore, as it's unreliable.
+                # The model is smart enough to use what matches.
+                # However, we'll use a safer 'Full Sentence' heuristic if needed.
             else:
                 trimmed_path = ref_audio
         
@@ -189,8 +184,10 @@ async def omnivoice_tts(text, voice_id=None, language="hindi"):
         "check": "चेक", "confirm": "कंफर्म", "kilometers": "किलोमीटर", "kilometer": "किलोमीटर",
         "km": "किलोमीटर", "okay": "ओके", "ok": "ओके", "sir": "सर", "ma'am": "मैम"
     }
+    import re
     for eng, hin in replacements.items():
-        text = text.replace(f" {eng}", f" {hin}").replace(f"{eng} ", f"{hin} ")
+        # Use regex to match whole words only, handling punctuation and boundaries
+        text = re.sub(rf'\b{eng}\b', hin, text, flags=re.IGNORECASE)
 
     # SAFETY CHECK: Prevent 'zero element' tensor error if text is empty or too short
     clean_text = text.strip()
