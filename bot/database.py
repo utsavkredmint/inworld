@@ -78,6 +78,7 @@ def init_db():
             name TEXT NOT NULL,
             ref_audio_path TEXT NOT NULL,
             ref_text TEXT DEFAULT '',
+            language TEXT DEFAULT 'hindi',
             created_at TEXT NOT NULL
         );
 
@@ -332,13 +333,13 @@ def update_contact_status(contact_id, status, call_id=None):
     conn.close()
 # ── Voices ──
 
-def create_voice(name, ref_audio_path, ref_text=""):
+def create_voice(name, ref_audio_path, ref_text="", language="hindi"):
     conn = get_db()
     voice_id = uuid.uuid4().hex[:12]
     now = _now()
     conn.execute(
-        "INSERT INTO voices (id, name, ref_audio_path, ref_text, created_at) VALUES (?,?,?,?,?)",
-        (voice_id, name, ref_audio_path, ref_text, now)
+        "INSERT INTO voices (id, name, ref_audio_path, ref_text, language, created_at) VALUES (?,?,?,?,?,?)",
+        (voice_id, name, ref_audio_path, ref_text, language, now)
     )
     conn.commit()
     voice = _row_to_dict(conn.execute("SELECT * FROM voices WHERE id=?", (voice_id,)).fetchone())

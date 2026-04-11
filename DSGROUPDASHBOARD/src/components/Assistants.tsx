@@ -222,18 +222,33 @@ export function Assistants() {
                 {selectedVoice === 'Riya' && <Check className="w-4 h-4" />}
               </button>
               {voices.map(v => (
-                <button
-                  key={v.id}
-                  type="button"
-                  onClick={() => setSelectedVoice(v.id)}
-                  className={cn(
-                    "px-4 py-3 rounded-xl border text-sm font-medium transition-all flex items-center justify-between",
-                    selectedVoice === v.id ? "bg-orange-500 text-white border-orange-600" : "bg-white text-zinc-600 border-zinc-200 hover:border-zinc-300"
-                  )}
-                >
-                  <span className="truncate">{v.name}</span>
-                  {selectedVoice === v.id && <Check className="w-4 h-4" />}
-                </button>
+                <div key={v.id} className="relative group">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedVoice(v.id)}
+                    className={cn(
+                      "w-full px-4 py-3 rounded-xl border text-sm font-medium transition-all flex items-center justify-between pr-10",
+                      selectedVoice === v.id ? "bg-orange-500 text-white border-orange-600 shadow-md shadow-orange-500/20" : "bg-white text-zinc-600 border-zinc-200 hover:border-zinc-300"
+                    )}
+                  >
+                    <span className="truncate">{v.name}</span>
+                    {selectedVoice === v.id && <Check className="w-4 h-4 shrink-0" />}
+                  </button>
+                  <button 
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      // Simple test audio trigger
+                      api.testVoice(v.id, "Hello! testing this voice identity.", v.language || 'hindi');
+                    }}
+                    className={cn(
+                      "absolute right-2 top-1/2 -translate-y-1/2 p-2 rounded-lg transition-all",
+                      selectedVoice === v.id ? "text-orange-200 hover:text-white hover:bg-white/10" : "text-zinc-400 hover:text-orange-500 hover:bg-orange-50"
+                    )}
+                  >
+                    <Play className="w-3.5 h-3.5 fill-current" />
+                  </button>
+                </div>
               ))}
             </div>
             <p className="text-[10px] text-zinc-400">Choose between the standard AI voice or your custom cloned voices.</p>

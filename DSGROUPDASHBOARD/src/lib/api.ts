@@ -140,14 +140,20 @@ export const api = {
   listVoices: () =>
     fetch(VOICES_BASE).then(res => res.json()) as Promise<Voice[]>,
 
-  cloneVoice: (formData: FormData) =>
-    fetch(`${VOICES_BASE}/clone`, {
+  cloneVoice: (name: string, file: File, refText?: string, language?: string) => {
+    const formData = new FormData();
+    formData.append("name", name);
+    formData.append("file", file);
+    if (refText) formData.append("ref_text", refText);
+    if (language) formData.append("language", language);
+    return fetch(`${VOICES_BASE}/clone`, {
       method: "POST",
       body: formData,
     }).then(res => {
       if (!res.ok) throw new Error("Failed to clone voice");
       return res.json() as Promise<Voice>;
-    }),
+    });
+  },
 
   deleteVoice: (id: string) =>
     fetch(`${VOICES_BASE}/${id}`, { method: "DELETE" }).then(res => res.json()),

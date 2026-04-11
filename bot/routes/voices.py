@@ -23,6 +23,7 @@ async def fetch_voices():
 async def clone_voice(
     name: str = Form(...),
     ref_text: Optional[str] = Form(""),
+    language: Optional[str] = Form("hindi"),
     file: UploadFile = File(...)
 ):
     """
@@ -47,9 +48,7 @@ async def clone_voice(
         raise HTTPException(status_code=500, detail="Failed to save audio file.")
 
     # 3. Save to database
-    # Note: We store the relative path or absolute path. 
-    # For now, let's store the absolute path for ease of loading.
-    voice = create_voice(name, filepath, ref_text)
+    voice = create_voice(name, filepath, ref_text, language)
     log.info(f"[VOICES] Cloned new voice: {name} ({voice_id})")
     return voice
 

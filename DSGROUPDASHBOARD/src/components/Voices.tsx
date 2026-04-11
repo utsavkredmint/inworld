@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Mic, Upload, Trash2, Play, Plus, Loader2, Music, Settings2, Globe } from 'lucide-react';
+import { Mic, Upload, Trash2, Play, Plus, Loader2, Music, Settings2, Globe, X } from 'lucide-react';
 import { api, Voice } from '../lib/api';
 
 export function Voices() {
@@ -16,7 +16,10 @@ export function Voices() {
   // Form state
   const [name, setName] = useState('');
   const [refText, setRefText] = useState('');
+  const [cloneLanguage, setCloneLanguage] = useState('hindi');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
   useEffect(() => {
     loadVoices();
@@ -52,24 +55,20 @@ export function Voices() {
 
   const handleClone = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedFile || !name) return;
+    if (!name || !selectedFile) return;
 
     setIsCloning(true);
-    const formData = new FormData();
-    formData.append('name', name);
-    formData.append('ref_text', refText);
-    formData.append('file', selectedFile);
-
     try {
-      await api.cloneVoice(formData);
-      await loadVoices();
+      await api.cloneVoice(name, selectedFile, refText, cloneLanguage);
       setShowCloneModal(false);
       setName('');
       setRefText('');
+      setCloneLanguage('hindi');
       setSelectedFile(null);
+      loadVoices();
     } catch (error) {
       console.error('Cloning failed:', error);
-      alert('Failed to clone voice. Please ensure it is a valid WAV/MP3 file.');
+      alert('Cloning failed. Please check the logs.');
     } finally {
       setIsCloning(false);
     }
@@ -233,78 +232,186 @@ export function Voices() {
       )}
 
       {showCloneModal && (
-        <div className="fixed inset-0 bg-zinc-950/40 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
-          <div className="bg-white w-full max-w-md rounded-3xl shadow-2xl border border-zinc-200 overflow-hidden ring-1 ring-black/5 animate-in zoom-in-95 fade-in duration-200">
-            <div className="p-8">
-              <h3 className="text-xl font-bold text-zinc-900 tracking-tight">Clone New Voice</h3>
-              <p className="text-zinc-500 text-sm mt-1">Provide a sample and text for the zero-shot model.</p>
-
-              <form onSubmit={handleClone} className="mt-8 space-y-6">
-                <div>
-                  <label className="block text-xs font-bold text-zinc-400 uppercase tracking-widest mb-2">Voice Name</label>
-                  <input 
-                    type="text" 
-                    required
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                    placeholder="e.g. My Personal Assistant"
-                    className="w-full px-4 py-3 rounded-xl border border-zinc-200 focus:outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 transition-all text-sm"
-                  />
+        <div className="fixed inset-0 bg-zinc-950/60 backdrop-blur-md z-[100] flex items-center justify-center p-4">
+          <div className="bg-white w-full max-w-2xl rounded-[2.5rem] shadow-2xl border border-white/20 overflow-hidden ring-1 ring-black/5 animate-in zoom-in-95 fade-in duration-300">
+            <div className="p-8 border-b border-zinc-100 flex items-center justify-between bg-zinc-50/50">
+              <div className="flex items-center gap-4">
+                <div className="w-12 h-12 rounded-2xl bg-orange-500 text-white flex items-center justify-center shadow-lg shadow-orange-500/20">
+                  <Mic className="w-6 h-6" />
                 </div>
-
                 <div>
-                  <label className="block text-xs font-bold text-zinc-400 uppercase tracking-widest mb-2">Reference Audio</label>
-                  <div className="relative group/upload">
-                    <input 
-                      type="file" 
-                      accept=".wav,.mp3"
+                  <h2 className="text-xl font-black text-zinc-900 tracking-tight">Clone New Identity</h2>
+                  <p className="text-sm text-zinc-400 font-medium">Create a persistent TTS model from audio</p>
+                </div>
+              </div>
+              <button 
+                onClick={() => setShowCloneModal(false)}
+                className="p-3 hover:bg-white hover:shadow-xl rounded-2xl transition-all text-zinc-400 hover:text-zinc-900"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleClone} className="p-8 space-y-8 max-h-[70vh] overflow-y-auto custom-scrollbar">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                {/* Left Column: Info & Text */}
+                <div className="space-y-6">
+                  <div className="space-y-2">
+                    <label className="text-xs font-bold text-zinc-400 uppercase tracking-widest px-1">Identity Name</label>
+                    <input
+                      type="text"
+                      value={name}
+                      onChange={(e) => setName(e.target.value)}
+                      placeholder="e.g. Professional Female Voice"
+                      className="w-full px-5 py-4 bg-zinc-50 border-2 border-transparent focus:border-orange-500/20 focus:bg-white rounded-2xl text-sm font-bold transition-all outline-none"
                       required
-                      onChange={(e) => setSelectedFile(e.target.files?.[0] || null)}
-                      className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
                     />
-                    <div className="w-full py-8 border-2 border-dashed border-zinc-200 rounded-2xl flex flex-col items-center justify-center bg-zinc-50 group-hover/upload:bg-zinc-100/50 group-hover/upload:border-orange-300 transition-all">
-                      <Upload className="w-6 h-6 text-zinc-400 group-hover/upload:text-orange-500 mb-2 transition-colors" />
-                      <span className="text-sm text-zinc-600 font-medium">
-                        {selectedFile ? selectedFile.name : 'Click to upload audio (WAV/MP3)'}
-                      </span>
-                      <span className="text-[10px] text-zinc-400 mt-1 uppercase font-bold tracking-tighter">Recommended: 5-10 seconds</span>
-                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-xs font-bold text-zinc-400 uppercase tracking-widest px-1 flex items-center justify-between">
+                      Reference Text
+                      <span className="text-[10px] lowercase font-normal opacity-60">(optional)</span>
+                    </label>
+                    <textarea
+                      value={refText}
+                      onChange={(e) => setRefText(e.target.value)}
+                      placeholder="Transcript of the audio clip..."
+                      className="w-full px-5 py-4 bg-zinc-50 border-2 border-transparent focus:border-orange-500/20 focus:bg-white rounded-2xl text-sm font-medium transition-all outline-none min-h-[120px] resize-none"
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-xs font-bold text-zinc-400 uppercase tracking-widest px-1 flex items-center gap-2">
+                      <Globe className="w-3.5 h-3.5" />
+                      Target Language
+                    </label>
+                    <select
+                      value={cloneLanguage}
+                      onChange={(e) => setCloneLanguage(e.target.value)}
+                      className="w-full px-5 py-4 bg-zinc-50 border-2 border-transparent focus:border-orange-500/20 focus:bg-white rounded-2xl text-sm font-bold transition-all outline-none appearance-none cursor-pointer"
+                    >
+                      <option value="hindi">Hindi</option>
+                      <option value="english">English (US)</option>
+                      <option value="spanish">Spanish</option>
+                      <option value="french">French</option>
+                      <option value="german">German</option>
+                      <option value="chinese">Chinese</option>
+                    </select>
                   </div>
                 </div>
 
-                <div>
-                  <label className="block text-xs font-bold text-zinc-400 uppercase tracking-widest mb-2">Transcription (Optional)</label>
-                  <textarea 
-                    value={refText}
-                    onChange={(e) => setRefText(e.target.value)}
-                    placeholder="What is spoken in the audio? (Recommended for better quality)"
-                    className="w-full px-4 py-3 rounded-xl border border-zinc-200 focus:outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 transition-all text-sm h-24 resize-none"
-                  />
-                </div>
+                {/* Right Column: Audio Upload */}
+                <div className="space-y-6">
+                  <div className="space-y-2">
+                    <label className="text-xs font-bold text-zinc-400 uppercase tracking-widest px-1">Reference Audio</label>
+                    <div 
+                      onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
+                      onDragLeave={() => setIsDragging(false)}
+                      onDrop={(e) => {
+                        e.preventDefault();
+                        setIsDragging(false);
+                        const file = e.dataTransfer.files[0];
+                        if (file && (file.type.includes('audio') || file.name.endsWith('.mp3') || file.name.endsWith('.wav'))) {
+                          setSelectedFile(file);
+                        }
+                      }}
+                      className={`
+                        relative group cursor-pointer border-2 border-dashed rounded-[2rem] p-8 transition-all duration-300
+                        ${selectedFile ? 'border-orange-500 bg-orange-50/30' : 'border-zinc-200 hover:border-orange-200 bg-zinc-50/50 hover:bg-white'}
+                        ${isDragging ? 'scale-105 border-orange-500 bg-orange-50' : ''}
+                      `}
+                    >
+                      <input 
+                        type="file" 
+                        accept=".wav,.mp3" 
+                        onChange={(e) => setSelectedFile(e.target.files?.[0] || null)}
+                        className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                      />
+                      <div className="flex flex-col items-center justify-center gap-4 text-center">
+                        <div className={`w-16 h-16 rounded-full flex items-center justify-center transition-all ${selectedFile ? 'bg-orange-500 text-white animate-bounce' : 'bg-white text-zinc-400 group-hover:text-orange-500 shadow-sm'}`}>
+                          <Upload className="w-8 h-8" />
+                        </div>
+                        {selectedFile ? (
+                          <div>
+                            <p className="text-sm font-bold text-zinc-900 mb-1">{selectedFile.name}</p>
+                            <p className="text-[10px] text-orange-600 font-bold uppercase">Ready to Clone</p>
+                          </div>
+                        ) : (
+                          <div>
+                            <p className="text-sm font-bold text-zinc-900 mb-1">Drop audio file here</p>
+                            <p className="text-[10px] text-zinc-400 font-medium">.WAV or .MP3 (Recommended 3-10s)</p>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
 
-                <div className="flex gap-3 pt-4">
-                  <button 
-                    type="button"
-                    onClick={() => setShowCloneModal(false)}
-                    className="flex-1 py-3 text-sm font-bold text-zinc-500 hover:text-zinc-900 transition-colors"
-                  >
-                    Cancel
-                  </button>
-                  <button 
-                    type="submit"
-                    disabled={isCloning || !selectedFile || !name}
-                    className="flex-1 bg-zinc-900 hover:bg-zinc-800 text-white py-3 rounded-xl text-sm font-bold shadow-lg shadow-zinc-900/10 active:scale-95 disabled:opacity-50 flex items-center justify-center gap-2"
-                  >
-                    {isCloning ? (
-                      <>
-                        <Loader2 className="w-4 h-4 animate-spin" />
-                        Cloning...
-                      </>
-                    ) : 'Create Voice'}
-                  </button>
+                  <div className="p-6 bg-zinc-900 rounded-[2rem] space-y-4 shadow-xl">
+                    <button 
+                      type="button"
+                      onClick={() => setShowAdvanced(!showAdvanced)}
+                      className="w-full flex items-center justify-between text-white group"
+                    >
+                      <div className="flex items-center gap-2">
+                        <Settings2 className="w-4 h-4 text-orange-500" />
+                        <span className="text-xs font-bold uppercase tracking-widest">Inference Engine</span>
+                      </div>
+                      <Plus className={`w-4 h-4 transition-transform ${showAdvanced ? 'rotate-45' : ''}`} />
+                    </button>
+                    {showAdvanced && (
+                      <div className="space-y-4 pt-4 border-t border-white/5 animate-in slide-in-from-top-4 duration-300">
+                        <div className="space-y-2">
+                          <div className="flex justify-between text-[10px] font-bold text-white/40 uppercase">
+                            <span>Steps</span>
+                            <span>32</span>
+                          </div>
+                          <div className="h-1 bg-white/10 rounded-full overflow-hidden">
+                            <div className="h-full w-[60%] bg-orange-500" />
+                          </div>
+                        </div>
+                        <div className="space-y-2">
+                          <div className="flex justify-between text-[10px] font-bold text-white/40 uppercase">
+                            <span>CFG Scale</span>
+                            <span>2.0</span>
+                          </div>
+                          <div className="h-1 bg-white/10 rounded-full overflow-hidden">
+                            <div className="h-full w-[40%] bg-orange-500" />
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 </div>
-              </form>
-            </div>
+              </div>
+
+              <div className="flex items-center gap-4 pt-4">
+                <button
+                  type="button"
+                  onClick={() => setShowCloneModal(false)}
+                  className="flex-1 py-4 text-sm font-bold text-zinc-500 hover:text-zinc-900 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isCloning || !selectedFile || !name}
+                  className="flex-[2] py-4 bg-orange-500 text-white rounded-2xl text-sm font-black hover:bg-orange-600 transition-all active:scale-95 disabled:opacity-50 shadow-xl shadow-orange-500/20 flex items-center justify-center gap-3 uppercase tracking-widest"
+                >
+                  {isCloning ? (
+                    <>
+                      <Loader2 className="w-5 h-5 animate-spin" />
+                      Cloning Identity...
+                    </>
+                  ) : (
+                    <>
+                      <Mic className="w-5 h-5" />
+                      Generate TTS Model
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
