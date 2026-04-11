@@ -114,6 +114,7 @@ async def get_agent_response(
 2. Keep responses natural and conversational.
 3. If user wants to end → set "terminate": true.
 4. Extract provided information (date, time, KM) and store it in your internal state.
+5. ANTI-HALLUCINATION: If user input is very short (1-2 words) or ambiguous (e.g., "I", "But", "Wait"), DO NOT jump to the next step. Instead, acknowledge and wait for them to finish their sentence.
 """
 
         # ALWAYS required for either type

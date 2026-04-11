@@ -469,15 +469,17 @@ async def plivo_stream(websocket: WebSocket):
                 # If bot is speaking and user said something substantial → interrupt
                 # Ignore short acknowledgments ("हां", "हैं", "ok") — not real interrupts
                 if is_speaking:
+                    # Patient Interruption: Only stop the bot if the user says something substantial (>= 4 words)
+                    # This prevents background noise or 'umm/hmm' from interrupting the flow.
                     word_count = len(text.split())
-                    if word_count >= 3:
+                    if word_count >= 4:
                         interrupt_event.set()
-                        log.info(f"[INTERRUPT] User spoke while bot talking: '{text}'")
+                        log.info(f"[INTERRUPT] Substantial user speech: '{text}' (words={word_count})")
                         while is_speaking:
                             await asyncio.sleep(0.05)
                     else:
-                        log.info(f"[SKIP] Short utterance while bot speaking: '{text}' — not interrupting")
-                        continue  # Don't process short acknowledgments during bot speech
+                        log.info(f"[SKIP] Short snippet while bot speaking: '{text}' — ignoring.")
+                        continue 
 
                 # 🚀 Instant Filler Logic
                 # Play filler immediately if we have text and user stopped talking
