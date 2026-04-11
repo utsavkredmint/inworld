@@ -1,0 +1,5 @@
+{
+  "name": "Kredmint Voice Bot Dashboard",
+  "description": "A comprehensive management platform for AI voice assistants, featuring real-time monitoring, campaign management, and knowledge base integration.",
+  "requestFramePermissions": ["microphone"]
+}

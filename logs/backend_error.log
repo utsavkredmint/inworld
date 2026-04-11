@@ -1,0 +1,252 @@
+2026-04-11 16:19:00: Using cache found in /Users/utsav/.cache/torch/hub/snakers4_silero-vad_master
+2026-04-11 16:19:00: /Users/utsav/Downloads/backup/bot/app.py:30: DeprecationWarning: 
+2026-04-11 16:19:00:         on_event is deprecated, use lifespan event handlers instead.
+2026-04-11 16:19:00: 
+2026-04-11 16:19:00:         Read more about it in the
+2026-04-11 16:19:00:         [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+2026-04-11 16:19:00:         
+2026-04-11 16:19:00:   @app.on_event("startup")
+2026-04-11 16:19:01: INFO:     Started server process [47787]
+2026-04-11 16:19:01: INFO:     Waiting for application startup.
+2026-04-11 16:19:01: 2026-04-11 16:19:01,002 [INFO] [DB] Database initialized
+2026-04-11 16:19:01: INFO:     Application startup complete.
+2026-04-11 16:19:01: ERROR:    [Errno 48] error while attempting to bind on address ('0.0.0.0', 8001): address already in use
+2026-04-11 16:19:01: INFO:     Waiting for application shutdown.
+2026-04-11 16:19:01: INFO:     Application shutdown complete.
+2026-04-11 16:19:04: Using cache found in /Users/utsav/.cache/torch/hub/snakers4_silero-vad_master
+2026-04-11 16:19:04: /Users/utsav/Downloads/backup/bot/app.py:30: DeprecationWarning: 
+2026-04-11 16:19:04:         on_event is deprecated, use lifespan event handlers instead.
+2026-04-11 16:19:04: 
+2026-04-11 16:19:04:         Read more about it in the
+2026-04-11 16:19:04:         [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+2026-04-11 16:19:04:         
+2026-04-11 16:19:04:   @app.on_event("startup")
+2026-04-11 16:19:04: INFO:     Started server process [47870]
+2026-04-11 16:19:04: INFO:     Waiting for application startup.
+2026-04-11 16:19:04: 2026-04-11 16:19:04,799 [INFO] [DB] Database initialized
+2026-04-11 16:19:04: INFO:     Application startup complete.
+2026-04-11 16:19:04: ERROR:    [Errno 48] error while attempting to bind on address ('0.0.0.0', 8001): address already in use
+2026-04-11 16:19:04: INFO:     Waiting for application shutdown.
+2026-04-11 16:19:04: INFO:     Application shutdown complete.
+2026-04-11 16:19:07: Using cache found in /Users/utsav/.cache/torch/hub/snakers4_silero-vad_master
+2026-04-11 16:19:08: /Users/utsav/Downloads/backup/bot/app.py:30: DeprecationWarning: 
+2026-04-11 16:19:08:         on_event is deprecated, use lifespan event handlers instead.
+2026-04-11 16:19:08: 
+2026-04-11 16:19:08:         Read more about it in the
+2026-04-11 16:19:08:         [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+2026-04-11 16:19:08:         
+2026-04-11 16:19:08:   @app.on_event("startup")
+2026-04-11 16:19:08: INFO:     Started server process [47872]
+2026-04-11 16:19:08: INFO:     Waiting for application startup.
+2026-04-11 16:19:08: 2026-04-11 16:19:08,311 [INFO] [DB] Database initialized
+2026-04-11 16:19:08: INFO:     Application startup complete.
+2026-04-11 16:19:08: ERROR:    [Errno 48] error while attempting to bind on address ('0.0.0.0', 8001): address already in use
+2026-04-11 16:19:08: INFO:     Waiting for application shutdown.
+2026-04-11 16:19:08: INFO:     Application shutdown complete.
+2026-04-11 16:19:11: Using cache found in /Users/utsav/.cache/torch/hub/snakers4_silero-vad_master
+2026-04-11 16:19:11: /Users/utsav/Downloads/backup/bot/app.py:30: DeprecationWarning: 
+2026-04-11 16:19:11:         on_event is deprecated, use lifespan event handlers instead.
+2026-04-11 16:19:11: 
+2026-04-11 16:19:11:         Read more about it in the
+2026-04-11 16:19:11:         [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+2026-04-11 16:19:11:         
+2026-04-11 16:19:11:   @app.on_event("startup")
+2026-04-11 16:19:11: INFO:     Started server process [47883]
+2026-04-11 16:19:11: INFO:     Waiting for application startup.
+2026-04-11 16:19:11: 2026-04-11 16:19:11,835 [INFO] [DB] Database initialized
+2026-04-11 16:19:11: INFO:     Application startup complete.
+2026-04-11 16:19:11: ERROR:    [Errno 48] error while attempting to bind on address ('0.0.0.0', 8001): address already in use
+2026-04-11 16:19:11: INFO:     Waiting for application shutdown.
+2026-04-11 16:19:11: INFO:     Application shutdown complete.
+2026-04-11 16:19:14: Using cache found in /Users/utsav/.cache/torch/hub/snakers4_silero-vad_master
+2026-04-11 16:19:15: /Users/utsav/Downloads/backup/bot/app.py:30: DeprecationWarning: 
+2026-04-11 16:19:15:         on_event is deprecated, use lifespan event handlers instead.
+2026-04-11 16:19:15: 
+2026-04-11 16:19:15:         Read more about it in the
+2026-04-11 16:19:15:         [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+2026-04-11 16:19:15:         
+2026-04-11 16:19:15:   @app.on_event("startup")
+2026-04-11 16:19:15: INFO:     Started server process [47886]
+2026-04-11 16:19:15: INFO:     Waiting for application startup.
+2026-04-11 16:19:15: 2026-04-11 16:19:15,314 [INFO] [DB] Database initialized
+2026-04-11 16:19:15: INFO:     Application startup complete.
+2026-04-11 16:19:15: ERROR:    [Errno 48] error while attempting to bind on address ('0.0.0.0', 8001): address already in use
+2026-04-11 16:19:15: INFO:     Waiting for application shutdown.
+2026-04-11 16:19:15: INFO:     Application shutdown complete.
+2026-04-11 16:19:18: Using cache found in /Users/utsav/.cache/torch/hub/snakers4_silero-vad_master
+2026-04-11 16:19:18: /Users/utsav/Downloads/backup/bot/app.py:30: DeprecationWarning: 
+2026-04-11 16:19:18:         on_event is deprecated, use lifespan event handlers instead.
+2026-04-11 16:19:18: 
+2026-04-11 16:19:18:         Read more about it in the
+2026-04-11 16:19:18:         [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+2026-04-11 16:19:18:         
+2026-04-11 16:19:18:   @app.on_event("startup")
+2026-04-11 16:19:18: INFO:     Started server process [47891]
+2026-04-11 16:19:18: INFO:     Waiting for application startup.
+2026-04-11 16:19:18: 2026-04-11 16:19:18,482 [INFO] [DB] Database initialized
+2026-04-11 16:19:18: INFO:     Application startup complete.
+2026-04-11 16:19:18: ERROR:    [Errno 48] error while attempting to bind on address ('0.0.0.0', 8001): address already in use
+2026-04-11 16:19:18: INFO:     Waiting for application shutdown.
+2026-04-11 16:19:18: INFO:     Application shutdown complete.
+2026-04-11 16:19:21: Using cache found in /Users/utsav/.cache/torch/hub/snakers4_silero-vad_master
+2026-04-11 16:19:21: /Users/utsav/Downloads/backup/bot/app.py:30: DeprecationWarning: 
+2026-04-11 16:19:21:         on_event is deprecated, use lifespan event handlers instead.
+2026-04-11 16:19:21: 
+2026-04-11 16:19:21:         Read more about it in the
+2026-04-11 16:19:21:         [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+2026-04-11 16:19:21:         
+2026-04-11 16:19:21:   @app.on_event("startup")
+2026-04-11 16:19:21: INFO:     Started server process [47893]
+2026-04-11 16:19:21: INFO:     Waiting for application startup.
+2026-04-11 16:19:21: 2026-04-11 16:19:21,613 [INFO] [DB] Database initialized
+2026-04-11 16:19:21: INFO:     Application startup complete.
+2026-04-11 16:19:21: ERROR:    [Errno 48] error while attempting to bind on address ('0.0.0.0', 8001): address already in use
+2026-04-11 16:19:21: INFO:     Waiting for application shutdown.
+2026-04-11 16:19:21: INFO:     Application shutdown complete.
+2026-04-11 16:19:24: Using cache found in /Users/utsav/.cache/torch/hub/snakers4_silero-vad_master
+2026-04-11 16:19:24: /Users/utsav/Downloads/backup/bot/app.py:30: DeprecationWarning: 
+2026-04-11 16:19:24:         on_event is deprecated, use lifespan event handlers instead.
+2026-04-11 16:19:24: 
+2026-04-11 16:19:24:         Read more about it in the
+2026-04-11 16:19:24:         [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+2026-04-11 16:19:24:         
+2026-04-11 16:19:24:   @app.on_event("startup")
+2026-04-11 16:19:24: INFO:     Started server process [47896]
+2026-04-11 16:19:24: INFO:     Waiting for application startup.
+2026-04-11 16:19:24: 2026-04-11 16:19:24,721 [INFO] [DB] Database initialized
+2026-04-11 16:19:24: INFO:     Application startup complete.
+2026-04-11 16:19:24: ERROR:    [Errno 48] error while attempting to bind on address ('0.0.0.0', 8001): address already in use
+2026-04-11 16:19:24: INFO:     Waiting for application shutdown.
+2026-04-11 16:19:24: INFO:     Application shutdown complete.
+2026-04-11 16:19:27: Using cache found in /Users/utsav/.cache/torch/hub/snakers4_silero-vad_master
+2026-04-11 16:19:27: /Users/utsav/Downloads/backup/bot/app.py:30: DeprecationWarning: 
+2026-04-11 16:19:27:         on_event is deprecated, use lifespan event handlers instead.
+2026-04-11 16:19:27: 
+2026-04-11 16:19:27:         Read more about it in the
+2026-04-11 16:19:27:         [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+2026-04-11 16:19:27:         
+2026-04-11 16:19:27:   @app.on_event("startup")
+2026-04-11 16:19:27: INFO:     Started server process [47898]
+2026-04-11 16:19:27: INFO:     Waiting for application startup.
+2026-04-11 16:19:27: 2026-04-11 16:19:27,976 [INFO] [DB] Database initialized
+2026-04-11 16:19:27: INFO:     Application startup complete.
+2026-04-11 16:19:27: ERROR:    [Errno 48] error while attempting to bind on address ('0.0.0.0', 8001): address already in use
+2026-04-11 16:19:27: INFO:     Waiting for application shutdown.
+2026-04-11 16:19:27: INFO:     Application shutdown complete.
+2026-04-11 16:19:30: Using cache found in /Users/utsav/.cache/torch/hub/snakers4_silero-vad_master
+2026-04-11 16:19:31: /Users/utsav/Downloads/backup/bot/app.py:30: DeprecationWarning: 
+2026-04-11 16:19:31:         on_event is deprecated, use lifespan event handlers instead.
+2026-04-11 16:19:31: 
+2026-04-11 16:19:31:         Read more about it in the
+2026-04-11 16:19:31:         [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+2026-04-11 16:19:31:         
+2026-04-11 16:19:31:   @app.on_event("startup")
+2026-04-11 16:19:31: INFO:     Started server process [47901]
+2026-04-11 16:19:31: INFO:     Waiting for application startup.
+2026-04-11 16:19:31: 2026-04-11 16:19:31,112 [INFO] [DB] Database initialized
+2026-04-11 16:19:31: INFO:     Application startup complete.
+2026-04-11 16:19:31: ERROR:    [Errno 48] error while attempting to bind on address ('0.0.0.0', 8001): address already in use
+2026-04-11 16:19:31: INFO:     Waiting for application shutdown.
+2026-04-11 16:19:31: INFO:     Application shutdown complete.
+2026-04-11 16:19:33: Using cache found in /Users/utsav/.cache/torch/hub/snakers4_silero-vad_master
+2026-04-11 16:19:34: /Users/utsav/Downloads/backup/bot/app.py:30: DeprecationWarning: 
+2026-04-11 16:19:34:         on_event is deprecated, use lifespan event handlers instead.
+2026-04-11 16:19:34: 
+2026-04-11 16:19:34:         Read more about it in the
+2026-04-11 16:19:34:         [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+2026-04-11 16:19:34:         
+2026-04-11 16:19:34:   @app.on_event("startup")
+2026-04-11 16:19:34: INFO:     Started server process [47903]
+2026-04-11 16:19:34: INFO:     Waiting for application startup.
+2026-04-11 16:19:34: 2026-04-11 16:19:34,242 [INFO] [DB] Database initialized
+2026-04-11 16:19:34: INFO:     Application startup complete.
+2026-04-11 16:19:34: ERROR:    [Errno 48] error while attempting to bind on address ('0.0.0.0', 8001): address already in use
+2026-04-11 16:19:34: INFO:     Waiting for application shutdown.
+2026-04-11 16:19:34: INFO:     Application shutdown complete.
+2026-04-11 16:19:37: Using cache found in /Users/utsav/.cache/torch/hub/snakers4_silero-vad_master
+2026-04-11 16:19:37: /Users/utsav/Downloads/backup/bot/app.py:30: DeprecationWarning: 
+2026-04-11 16:19:37:         on_event is deprecated, use lifespan event handlers instead.
+2026-04-11 16:19:37: 
+2026-04-11 16:19:37:         Read more about it in the
+2026-04-11 16:19:37:         [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+2026-04-11 16:19:37:         
+2026-04-11 16:19:37:   @app.on_event("startup")
+2026-04-11 16:19:37: INFO:     Started server process [47906]
+2026-04-11 16:19:37: INFO:     Waiting for application startup.
+2026-04-11 16:19:37: 2026-04-11 16:19:37,688 [INFO] [DB] Database initialized
+2026-04-11 16:19:37: INFO:     Application startup complete.
+2026-04-11 16:19:37: ERROR:    [Errno 48] error while attempting to bind on address ('0.0.0.0', 8001): address already in use
+2026-04-11 16:19:37: INFO:     Waiting for application shutdown.
+2026-04-11 16:19:37: INFO:     Application shutdown complete.
+2026-04-11 16:19:41: Using cache found in /Users/utsav/.cache/torch/hub/snakers4_silero-vad_master
+2026-04-11 16:19:41: /Users/utsav/Downloads/backup/bot/app.py:30: DeprecationWarning: 
+2026-04-11 16:19:41:         on_event is deprecated, use lifespan event handlers instead.
+2026-04-11 16:19:41: 
+2026-04-11 16:19:41:         Read more about it in the
+2026-04-11 16:19:41:         [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+2026-04-11 16:19:41:         
+2026-04-11 16:19:41:   @app.on_event("startup")
+2026-04-11 16:19:41: INFO:     Started server process [47917]
+2026-04-11 16:19:41: INFO:     Waiting for application startup.
+2026-04-11 16:19:41: 2026-04-11 16:19:41,406 [INFO] [DB] Database initialized
+2026-04-11 16:19:41: INFO:     Application startup complete.
+2026-04-11 16:19:41: ERROR:    [Errno 48] error while attempting to bind on address ('0.0.0.0', 8001): address already in use
+2026-04-11 16:19:41: INFO:     Waiting for application shutdown.
+2026-04-11 16:19:41: INFO:     Application shutdown complete.
+2026-04-11 16:19:44: Using cache found in /Users/utsav/.cache/torch/hub/snakers4_silero-vad_master
+2026-04-11 16:19:45: /Users/utsav/Downloads/backup/bot/app.py:30: DeprecationWarning: 
+2026-04-11 16:19:45:         on_event is deprecated, use lifespan event handlers instead.
+2026-04-11 16:19:45: 
+2026-04-11 16:19:45:         Read more about it in the
+2026-04-11 16:19:45:         [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+2026-04-11 16:19:45:         
+2026-04-11 16:19:45:   @app.on_event("startup")
+2026-04-11 16:19:45: INFO:     Started server process [47920]
+2026-04-11 16:19:45: INFO:     Waiting for application startup.
+2026-04-11 16:19:45: 2026-04-11 16:19:45,246 [INFO] [DB] Database initialized
+2026-04-11 16:19:45: INFO:     Application startup complete.
+2026-04-11 16:19:45: ERROR:    [Errno 48] error while attempting to bind on address ('0.0.0.0', 8001): address already in use
+2026-04-11 16:19:45: INFO:     Waiting for application shutdown.
+2026-04-11 16:19:45: INFO:     Application shutdown complete.
+2026-04-11 16:19:48: Using cache found in /Users/utsav/.cache/torch/hub/snakers4_silero-vad_master
+2026-04-11 16:19:49: /Users/utsav/Downloads/backup/bot/app.py:30: DeprecationWarning: 
+2026-04-11 16:19:49:         on_event is deprecated, use lifespan event handlers instead.
+2026-04-11 16:19:49: 
+2026-04-11 16:19:49:         Read more about it in the
+2026-04-11 16:19:49:         [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+2026-04-11 16:19:49:         
+2026-04-11 16:19:49:   @app.on_event("startup")
+2026-04-11 16:19:49: INFO:     Started server process [47922]
+2026-04-11 16:19:49: INFO:     Waiting for application startup.
+2026-04-11 16:19:49: 2026-04-11 16:19:49,105 [INFO] [DB] Database initialized
+2026-04-11 16:19:49: INFO:     Application startup complete.
+2026-04-11 16:19:49: INFO:     Uvicorn running on http://0.0.0.0:8001 (Press CTRL+C to quit)
+2026-04-11 16:48:52: 2026-04-11 16:48:52,250 [ERROR] [TTS] Failed to import OmniVoice from local 'omnivoice' package
+2026-04-11 16:48:52: Using cache found in /Users/utsav/.cache/torch/hub/snakers4_silero-vad_master
+2026-04-11 16:48:52: /Users/utsav/Downloads/backup/bot/app.py:32: DeprecationWarning: 
+2026-04-11 16:48:52:         on_event is deprecated, use lifespan event handlers instead.
+2026-04-11 16:48:52: 
+2026-04-11 16:48:52:         Read more about it in the
+2026-04-11 16:48:52:         [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+2026-04-11 16:48:52:         
+2026-04-11 16:48:52:   @app.on_event("startup")
+2026-04-11 16:48:53: INFO:     Started server process [55966]
+2026-04-11 16:48:53: INFO:     Waiting for application startup.
+2026-04-11 16:48:53: 2026-04-11 16:48:53,066 [INFO] [DB] Database initialized
+2026-04-11 16:48:53: INFO:     Application startup complete.
+2026-04-11 16:48:53: INFO:     Uvicorn running on http://0.0.0.0:8001 (Press CTRL+C to quit)
+2026-04-11 16:56:08: 2026-04-11 16:56:08,001 [INFO] [VOICES] Cloned new voice: leo (d331323ad31c)
+2026-04-11 17:10:36: 2026-04-11 17:10:36,596 [INFO] [VOICES] Cloned new voice: reeta (3e27b0f2509b)
+2026-04-11 17:13:50: Using cache found in /Users/utsav/.cache/torch/hub/snakers4_silero-vad_master
+2026-04-11 17:13:50: /Users/utsav/Downloads/backup/bot/app.py:32: DeprecationWarning: 
+2026-04-11 17:13:50:         on_event is deprecated, use lifespan event handlers instead.
+2026-04-11 17:13:50: 
+2026-04-11 17:13:50:         Read more about it in the
+2026-04-11 17:13:50:         [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+2026-04-11 17:13:50:         
+2026-04-11 17:13:50:   @app.on_event("startup")
+2026-04-11 17:13:50: INFO:     Started server process [61339]
+2026-04-11 17:13:50: INFO:     Waiting for application startup.
+2026-04-11 17:13:50: 2026-04-11 17:13:50,675 [INFO] [DB] Database initialized
+2026-04-11 17:13:50: INFO:     Application startup complete.
+2026-04-11 17:13:50: INFO:     Uvicorn running on http://0.0.0.0:8001 (Press CTRL+C to quit)

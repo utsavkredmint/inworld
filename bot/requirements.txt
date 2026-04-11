@@ -1,0 +1,11 @@
+fastapi
+uvicorn[standard]
+aiohttp
+websockets
+plivo
+python-dotenv
+groq
+torch
+torchaudio
+pydub
+static-ffmpeg

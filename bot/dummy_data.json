@@ -1,0 +1,50 @@
+[
+    {
+        "user_id": "U001",
+        "name": "उत्सव",
+        "phone": "+919810815434",
+        "skus": [
+            "Rajnigandha 2.5g",
+            "Rajnigandha 17g",
+            "Khajoor Pouch"
+        ],
+        "current_time": "10:30 AM",
+        "current_stock": {
+            "Rajnigandha 2.5g": null,
+            "Rajnigandha 17g": null,
+            "Khajoor Pouch": null
+        }
+    },
+    {
+        "user_id": "U002",
+        "name": "राहुल",
+        "phone": "+918707550471",
+        "skus": [
+            "Double Zero 10g",
+            "Khajoor Dispenser",
+            "Rajnigandha 2.5g"
+        ],
+        "current_time": "2:15 PM",
+        "current_stock": {
+            "Double Zero 10g": null,
+            "Khajoor Dispenser": null,
+            "Rajnigandha 2.5g": null
+        }
+    },
+    {
+        "user_id": "U003",
+        "name": "संदीप",
+        "phone": "9988776655",
+        "skus": [
+            "Rajnigandha 17g",
+            "Double Zero 2g",
+            "Khajoor Pouch"
+        ],
+        "current_time": "6:45 PM",
+        "current_stock": {
+            "Rajnigandha 17g": null,
+            "Double Zero 2g": null,
+            "Khajoor Pouch": null
+        }
+    }
+]
