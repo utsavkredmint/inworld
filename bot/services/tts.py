@@ -88,6 +88,24 @@ def resample_and_to_mulaw(audio_tensor, orig_sr=24000, target_sr=8000):
     mulaw = audioop.lin2ulaw(pcm16, 2)
     return mulaw
 
+def _resolve_audio_path(path):
+    """Helper to handle absolute paths from different machines."""
+    if not path:
+        return path
+    if os.path.exists(path):
+        return path
+    
+    # Try to find the file in the local voices directory
+    filename = os.path.basename(path)
+    local_voices_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "voices")
+    local_path = os.path.join(local_voices_dir, filename)
+    
+    if os.path.exists(local_path):
+        log.info(f"[TTS] Resolved path {path} to local {local_path}")
+        return local_path
+    
+    return path
+
 async def omnivoice_tts(text, voice_id=None):
     """Generate audio using OmniVoice."""
     model = await _get_model()
@@ -96,7 +114,7 @@ async def omnivoice_tts(text, voice_id=None):
         return None
 
     # Determine reference audio and text
-    ref_audio = DEFAULT_REF_AUDIO
+    ref_audio = _resolve_audio_path(DEFAULT_REF_AUDIO)
     ref_text = DEFAULT_REF_TEXT
     
     if voice_id:
@@ -104,7 +122,7 @@ async def omnivoice_tts(text, voice_id=None):
         from database import get_voice
         voice = get_voice(voice_id)
         if voice:
-            ref_audio = voice["ref_audio_path"]
+            ref_audio = _resolve_audio_path(voice["ref_audio_path"])
             ref_text = voice["ref_text"]
 
     log.info(f"[TTS] Synthesizing with voice: {voice_id or 'default'}")
