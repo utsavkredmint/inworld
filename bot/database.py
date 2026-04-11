@@ -89,6 +89,18 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_contacts_status ON campaign_contacts(status);
     """)
     conn.commit()
+
+    # Auto-migration: Check if 'language' column exists in 'voices'
+    try:
+        cursor = conn.execute("PRAGMA table_info(voices)")
+        columns = [row[1] for row in cursor.fetchall()]
+        if 'language' not in columns:
+            log.info("[DB] Migrating 'voices' table: adding 'language' column")
+            conn.execute("ALTER TABLE voices ADD COLUMN language TEXT DEFAULT 'hindi'")
+            conn.commit()
+    except Exception as e:
+        log.warning(f"[DB] Migration check failed: {e}")
+
     conn.close()
     log.info("[DB] Database initialized")
 

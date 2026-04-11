@@ -48,9 +48,16 @@ async def clone_voice(
         raise HTTPException(status_code=500, detail="Failed to save audio file.")
 
     # 3. Save to database
-    voice = create_voice(name, filepath, ref_text, language)
-    log.info(f"[VOICES] Cloned new voice: {name} ({voice_id})")
-    return voice
+    try:
+        voice = create_voice(name, filepath, ref_text, language)
+        log.info(f"[VOICES] Cloned new voice successfully: {name} ({voice_id})")
+        return voice
+    except Exception as e:
+        log.error(f"[VOICES] Database error during cloning: {str(e)}")
+        # If DB fails, try to clean up the saved file
+        if os.path.exists(filepath):
+            os.remove(filepath)
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
 
 @router.delete("/{voice_id}")
 async def remove_voice(voice_id: str):
