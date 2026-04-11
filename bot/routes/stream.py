@@ -346,7 +346,7 @@ async def plivo_stream(websocket: WebSocket):
             try:
                 # Add a small delay between tasks to prioritize real-time replies
                 await asyncio.sleep(0.5)
-                await omnivoice_tts(t, voice_id=voice_id, language=agent_language)
+                await omnivoice_tts(t, voice_id=voice_id, language=tts_language)
             except Exception as e:
                 log.warning(f"[CACHE] Pre-cache failed for '{t}': {e}")
         log.info("[CACHE] Background pre-caching complete.")
@@ -385,11 +385,12 @@ async def plivo_stream(websocket: WebSocket):
         # Pre-cache in background while greeting plays
         asyncio.create_task(_pre_cache_skus())
         
-        # Pre-generate Fillers for 100ms latency
+        # Pre-generate Fillers for 100ms latency (Wait 2s so Greeting is perfect)
+        await asyncio.sleep(2.0)
         fillers = ["जी", "जी बताइए", "जी देख रही हूँ"]
         for f in fillers:
             try:
-                audio = await omnivoice_tts(f, voice_id=voice_id, language=agent_language)
+                audio = await omnivoice_tts(f, voice_id=voice_id, language=tts_language)
                 if audio: filler_cache[f] = audio
             except: pass
         log.info(f"[CACHE] Ready with {len(filler_cache)} instant fillers")
