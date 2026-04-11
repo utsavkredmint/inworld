@@ -119,9 +119,12 @@ async def plivo_stream(websocket: WebSocket):
             from services.llm import build_agent_prompt
             system_prompt_override = build_agent_prompt(local_call_data) + f"\n\n*** IMPORTANT: {name_injection}"
 
-    # 🔥 HOT LATENCY FIX: Start generating greeting TTS IMMEDIATELY
+    # 🌍 Voice & Language Identity
+    agent_language = agent.get("language", "hindi") if agent else "hindi"
     voice_id = agent.get("voice") if agent else None
-    greeting_task = asyncio.create_task(omnivoice_tts(greeting, voice_id=voice_id))
+    
+    # 🔥 HOT LATENCY FIX: Start generating greeting TTS IMMEDIATELY
+    greeting_task = asyncio.create_task(omnivoice_tts(greeting, voice_id=voice_id, language=agent_language))
 
     # Check for pre-setup session (STT + TTS already connected)
     from call_sessions import get_session
@@ -139,7 +142,10 @@ async def plivo_stream(websocket: WebSocket):
     tts_ctx = pre_session["tts_ctx"] if pre_session else TTSContext()
     stt_pre_connected = bool(pre_session and pre_session.get("stt_ready"))
     last_stock = {}
-
+    
+    # 🌍 Voice & Language Identity
+    agent_language = agent.get("language", "hindi") if agent else "hindi"
+    voice_id = agent.get("voice") if agent else None
     async def speak(text):
         nonlocal is_speaking, speak_start_ts
         tts_start = time.time()
@@ -148,10 +154,11 @@ async def plivo_stream(websocket: WebSocket):
         interrupt_event.clear()
 
         prepared = prepare_for_tts(text)
+        cache_key = f"{prepared}_{voice_id}_{agent_language}"
 
         # Check pre-built TTS cache for instant playback (zero TTS latency)
-        if prepared in TTS_CACHE:
-            audio = TTS_CACHE[prepared]
+        if cache_key in TTS_CACHE:
+            audio = TTS_CACHE[cache_key]
             log.info(f"[SPEAK] Cache HIT for: {text[:40]}")
             # Send cached audio immediately
             try:
@@ -168,12 +175,11 @@ async def plivo_stream(websocket: WebSocket):
         else:
             log.info(f"[SPEAK] Streaming TTS for: {text[:40]}... (ctx_ready={tts_ctx.ready})")
             # This streams directly to Plivo WebSocket internally!
-            voice_id = agent.get("voice") if agent else None
-            audio = await stream_tts_to_plivo(text, tts_ctx, websocket, voice_id=voice_id)
+            audio = await stream_tts_to_plivo(text, tts_ctx, websocket, voice_id=voice_id, language=agent_language)
             # Fallback to omnivoice_tts if streaming didn't work
             if not audio:
                 log.info(f"[SPEAK] Fallback to direct TTS for: {text[:40]}")
-                audio = await omnivoice_tts(text, voice_id=voice_id)
+                audio = await omnivoice_tts(text, voice_id=voice_id, language=agent_language)
                 if audio:
                     try:
                         await websocket.send_text(json.dumps({
@@ -308,8 +314,7 @@ async def plivo_stream(websocket: WebSocket):
         ]
         log.info(f"[CACHE] Pre-generating TTS for {len(templates)} phrases...")
         # Pre-cache in background
-        voice_id = agent.get("voice") if agent else None
-        tasks = [omnivoice_tts(t, voice_id=voice_id) for t in templates]
+        tasks = [omnivoice_tts(t, voice_id=voice_id, language=agent_language) for t in templates]
         results = await asyncio.gather(*tasks, return_exceptions=True)
         hits = sum(1 for r in results if r and not isinstance(r, Exception))
         log.info(f"[CACHE] Pre-cached {hits}/{len(templates)} phrases")
