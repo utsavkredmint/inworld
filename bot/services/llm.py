@@ -107,12 +107,13 @@ async def get_agent_response(
 4. If user exit intent → terminate true.
 """
         else:
-            # 🔥 GENERIC AGENT RULES
+            # 🔥 GENERIC AGENT RULES (Optimized for Kia/Sales)
             prompt += """
 *** RUNTIME RULES:
 1. Follow the OBJECTIVE strictly.
 2. Keep responses natural and conversational.
 3. If user wants to end → set "terminate": true.
+4. Extract provided information (date, time, KM) and store it in your internal state.
 """
 
         # ALWAYS required for either type
