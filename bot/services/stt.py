@@ -15,7 +15,6 @@ DG_URL = (
     "&language=hi"
     "&interim_results=true"
     "&endpointing=300"
-    "&utterance_end_ms=500"
     "&smart_format=false"
     "&punctuate=false"
 )
