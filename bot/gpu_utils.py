@@ -3,13 +3,17 @@ import logging
 
 log = logging.getLogger(__name__)
 
+import os
+
 def get_device():
     """Detect and return the best available device."""
+    # Allow manual override for debugging or hardware issues
+    if os.getenv("FORCE_CPU") == "1":
+        return "cpu"
+        
     if torch.cuda.is_available():
         return "cuda"
     elif torch.backends.mps.is_available():
-        # Intel Macs with specific GPUs might support MPS, 
-        # but it's most stable on Apple Silicon.
         return "mps"
     return "cpu"
 
