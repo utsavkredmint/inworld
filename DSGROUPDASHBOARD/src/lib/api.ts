@@ -152,8 +152,12 @@ export const api = {
   deleteVoice: (id: string) =>
     fetch(`${VOICES_BASE}/${id}`, { method: "DELETE" }).then(res => res.json()),
 
-  async testVoice(id: string) {
-    const response = await fetch(`${VOICES_BASE}/${id}/test`);
+  async testVoice(id: string, text?: string, language?: string) {
+    const params = new URLSearchParams();
+    if (text) params.append('text', text);
+    if (language) params.append('language', language);
+    
+    const response = await fetch(`${VOICES_BASE}/${id}/test?${params.toString()}`);
     if (!response.ok) throw new Error('Generation failed');
     return response.blob();
   }

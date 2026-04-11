@@ -121,7 +121,7 @@ def _resolve_audio_path(path):
     
     return path
 
-async def omnivoice_tts(text, voice_id=None):
+async def omnivoice_tts(text, voice_id=None, language="hindi"):
     """Generate audio using OmniVoice."""
     model = await _get_model()
     if not model:
@@ -138,9 +138,9 @@ async def omnivoice_tts(text, voice_id=None):
         voice = get_voice(voice_id)
         if voice:
             ref_audio = _resolve_audio_path(voice["ref_audio_path"])
-            ref_text = voice["ref_text"]
+            ref_text = voice["ref_text"] or DEFAULT_REF_TEXT
 
-    log.info(f"[TTS] Synthesizing with voice: {voice_id or 'default'}")
+    log.info(f"[TTS] Synthesizing with voice: {voice_id or 'default'} in language: {language}")
     
     start = time.time()
     try:
@@ -149,7 +149,8 @@ async def omnivoice_tts(text, voice_id=None):
         audio_list = await loop.run_in_executor(None, lambda: model.generate(
             text=text,
             ref_audio=ref_audio,
-            ref_text=ref_text
+            ref_text=ref_text,
+            language=language or "hindi"
         ))
         
         if not audio_list or len(audio_list) == 0:
@@ -170,16 +171,19 @@ class TTSContext:
     async def open(self): return True
     async def close(self): pass
 
-async def stream_tts_to_plivo(text, tts_ctx, plivo_ws, voice_id=None):
+async def stream_tts_to_plivo(text, tts_ctx, plivo_ws, voice_id=None, language="hindi"):
     """
     Simulated streaming: generate whole sentence and send in chunks to Plivo.
     """
-    if text in TTS_CACHE:
-        mulaw = TTS_CACHE[text]
+    # Use a combined key for cache
+    cache_key = f"{text}_{voice_id}_{language}"
+    
+    if cache_key in TTS_CACHE:
+        mulaw = TTS_CACHE[cache_key]
     else:
-        mulaw = await omnivoice_tts(text, voice_id)
+        mulaw = await omnivoice_tts(text, voice_id, language)
         if mulaw:
-             TTS_CACHE[text] = mulaw
+             TTS_CACHE[cache_key] = mulaw
 
     if not mulaw:
         return None

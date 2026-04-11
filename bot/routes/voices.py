@@ -73,7 +73,7 @@ async def remove_voice(voice_id: str):
     return {"status": "success"}
 
 @router.get("/{voice_id}/test")
-async def test_voice(voice_id: str, text: Optional[str] = None):
+async def test_voice(voice_id: str, text: Optional[str] = None, language: Optional[str] = "hindi"):
     """Generate a test audio clip for a voice and return it as WAV."""
     voice = get_voice(voice_id)
     if not voice:
@@ -89,12 +89,13 @@ async def test_voice(voice_id: str, text: Optional[str] = None):
     ref_text = voice["ref_text"] or DEFAULT_REF_TEXT
 
     try:
-        log.info(f"[VOICES] Generating test clip for {voice_id}...")
+        log.info(f"[VOICES] Generating test clip for {voice_id} in {language}...")
         loop = asyncio.get_event_loop()
         audio_list = await loop.run_in_executor(None, lambda: model.generate(
             text=sample_text,
             ref_audio=ref_audio,
-            ref_text=ref_text
+            ref_text=ref_text,
+            language=language or "hindi"
         ))
         
         if not audio_list or len(audio_list) == 0:

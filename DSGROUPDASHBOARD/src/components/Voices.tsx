@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Mic, Upload, Trash2, Play, Plus, Loader2, Music } from 'lucide-react';
+import { Mic, Upload, Trash2, Play, Plus, Loader2, Music, Settings2, Globe } from 'lucide-react';
 import { api, Voice } from '../lib/api';
 
 export function Voices() {
@@ -9,6 +9,10 @@ export function Voices() {
   const [testingVoiceId, setTestingVoiceId] = useState<string | null>(null);
   const [showCloneModal, setShowCloneModal] = useState(false);
   
+  // Test settings state
+  const [testText, setTestText] = useState('नमस्ते, मैं आपकी सहायता के लिए तैयार हूँ।');
+  const [testLanguage, setTestLanguage] = useState('hindi');
+
   // Form state
   const [name, setName] = useState('');
   const [refText, setRefText] = useState('');
@@ -33,7 +37,7 @@ export function Voices() {
     if (testingVoiceId) return;
     setTestingVoiceId(voiceId);
     try {
-      const blob = await api.testVoice(voiceId);
+      const blob = await api.testVoice(voiceId, testText, testLanguage);
       const url = URL.createObjectURL(blob);
       const audio = new Audio(url);
       audio.onended = () => URL.revokeObjectURL(url);
@@ -121,54 +125,113 @@ export function Voices() {
           </button>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {(voices || []).map((voice) => (
-            <div key={voice.id} className="group p-5 rounded-2xl border border-zinc-200 bg-white hover:border-orange-200 hover:shadow-xl hover:shadow-orange-500/5 transition-all duration-300 relative overflow-hidden">
-              <div className="absolute top-0 right-0 p-4 opacity-0 group-hover:opacity-100 transition-opacity">
-                <button 
-                  onClick={() => handleDelete(voice.id)}
-                  className="p-2 text-zinc-400 hover:text-red-500 transition-colors bg-white rounded-lg shadow-sm border border-zinc-100"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
+        <>
+          <div className="mb-8 p-6 bg-zinc-900 border border-white/10 rounded-2xl shadow-2xl">
+            <div className="flex items-center gap-3 mb-6">
+              <div className="p-2 bg-zinc-800 rounded-lg">
+                <Settings2 className="w-5 h-5 text-zinc-400" />
               </div>
-
-              <div className="flex items-start gap-4">
-                <div className="w-12 h-12 rounded-xl bg-orange-500/10 flex items-center justify-center shrink-0">
-                  <Music className="text-orange-600 w-6 h-6" />
-                </div>
-                <div className="min-w-0 pr-8">
-                  <h3 className="font-bold text-zinc-900 truncate">{voice.name}</h3>
-                  <p className="text-xs text-zinc-500 mt-1">Created {new Date(voice.created_at).toLocaleDateString()}</p>
-                </div>
-              </div>
-
-              <div className="mt-6 pt-5 border-t border-zinc-50 flex items-center justify-between">
-                <div className="flex flex-col">
-                  <span className="text-[10px] text-zinc-400 uppercase font-bold tracking-wider">Reference</span>
-                  <span className="text-xs text-zinc-600 font-medium truncate max-w-[120px]">
-                    {voice.ref_audio_path.split('/').pop()}
-                  </span>
-                </div>
-                <button 
-                  disabled={testingVoiceId === voice.id}
-                  onClick={() => handleTestVoice(voice.id)}
-                  className="flex items-center gap-2 px-3 py-1.5 bg-zinc-900 text-white rounded-lg text-xs font-bold hover:bg-zinc-800 transition-colors active:scale-95 disabled:opacity-50"
-                >
-                  {testingVoiceId === voice.id ? (
-                    <Loader2 className="w-3 h-3 animate-spin" />
-                  ) : (
-                    <Play className="w-3 h-3 fill-current" />
-                  )}
-                  {testingVoiceId === voice.id ? 'Testing...' : 'Test Voice'}
-                </button>
+              <div>
+                <h3 className="text-white font-semibold">Test Playback Settings</h3>
+                <p className="text-sm text-white/40">Customize how your test audio is generated</p>
               </div>
             </div>
-          ))}
-        </div>
+            
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              <div className="lg:col-span-2 space-y-3">
+                <label className="flex items-center gap-2 text-xs font-bold text-white/40 uppercase tracking-wider">
+                  Test Sentence
+                </label>
+                <textarea
+                  value={testText}
+                  onChange={(e) => setTestText(e.target.value)}
+                  className="w-full bg-black border border-white/10 rounded-xl p-4 text-sm text-white focus:outline-none focus:border-zinc-500 min-h-[100px] transition-colors resize-none placeholder:text-white/10"
+                  placeholder="Type anything here... e.g. 'नमस्ते, आपका क्या हाल है?'"
+                />
+              </div>
+              
+              <div className="space-y-6">
+                <div className="space-y-3">
+                  <label className="flex items-center gap-2 text-xs font-bold text-white/40 uppercase tracking-wider">
+                    <Globe className="w-3 h-3" />
+                    Language
+                  </label>
+                  <select
+                    value={testLanguage}
+                    onChange={(e) => setTestLanguage(e.target.value)}
+                    className="w-full bg-black border border-white/10 rounded-xl p-4 text-sm text-white focus:outline-none focus:border-zinc-500 appearance-none transition-colors"
+                  >
+                    <option value="hindi">Hindi</option>
+                    <option value="english">English (US)</option>
+                    <option value="spanish">Spanish</option>
+                    <option value="french">French</option>
+                    <option value="german">German</option>
+                    <option value="chinese">Chinese</option>
+                    <option value="japanese">Japanese</option>
+                  </select>
+                </div>
+                
+                <div className="p-4 bg-zinc-800/30 rounded-xl border border-white/5">
+                  <p className="text-[11px] leading-relaxed text-zinc-400">
+                    <strong className="text-zinc-200 block mb-1">Speaker Persistence:</strong>
+                    Once cloned, the voice is saved under your account. You can use it in agents by its name without re-uploading audio.
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {(voices || []).map((voice) => (
+              <div key={voice.id} className="group p-5 rounded-2xl border border-zinc-200 bg-white hover:border-orange-200 hover:shadow-xl hover:shadow-orange-500/5 transition-all duration-300 relative overflow-hidden">
+                <div className="absolute top-0 right-0 p-4 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <button 
+                    onClick={() => handleDelete(voice.id)}
+                    className="p-2 text-zinc-400 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
+                
+                <div className="flex items-center gap-4 mb-6">
+                  <div className="w-12 h-12 rounded-2xl bg-orange-50 flex items-center justify-center text-orange-500 group-hover:scale-110 transition-transform duration-300">
+                    <Music className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-zinc-900">{voice.name}</h3>
+                    <p className="text-xs text-zinc-400">Created {new Date(voice.created_at).toLocaleDateString()}</p>
+                  </div>
+                </div>
+
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between p-3 bg-zinc-50 rounded-xl group-hover:bg-orange-50/50 transition-colors">
+                    <div className="flex items-center gap-2">
+                      <div className="w-1.5 h-1.5 rounded-full bg-orange-500" />
+                      <span className="text-xs font-medium text-zinc-500 uppercase tracking-wider">Reference</span>
+                    </div>
+                    <span className="text-[10px] font-mono text-zinc-400">
+                      {voice.ref_audio_path.split('/').pop()}
+                    </span>
+                  </div>
+                  <button 
+                    disabled={testingVoiceId === voice.id}
+                    onClick={() => handleTestVoice(voice.id)}
+                    className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-zinc-900 text-white rounded-xl text-sm font-bold hover:bg-zinc-800 transition-all active:scale-95 disabled:opacity-50 shadow-lg shadow-zinc-900/10"
+                  >
+                    {testingVoiceId === voice.id ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <Play className="w-4 h-4 fill-current" />
+                    )}
+                    {testingVoiceId === voice.id ? 'Generating...' : 'Test Voice'}
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </>
       )}
 
-      {/* Modal Integration could go here, but for brevity I'll use a simple conditional render */}
       {showCloneModal && (
         <div className="fixed inset-0 bg-zinc-950/40 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
           <div className="bg-white w-full max-w-md rounded-3xl shadow-2xl border border-zinc-200 overflow-hidden ring-1 ring-black/5 animate-in zoom-in-95 fade-in duration-200">
