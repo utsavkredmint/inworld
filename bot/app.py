@@ -8,7 +8,7 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger(__name__)
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from database import init_db
 from gpu_utils import log_device_info
@@ -35,10 +35,17 @@ app.include_router(api_router)
 app.include_router(voices_router)
 
 
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    log.info(f"[REQUEST] {request.method} {request.url}")
+    response = await call_next(request)
+    return response
+
 @app.on_event("startup")
 async def startup():
     log_device_info()
     init_db()
+    log.info("[DB] Database initialized")
 
 
 if __name__ == "__main__":
