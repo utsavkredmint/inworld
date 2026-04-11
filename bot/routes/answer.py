@@ -32,7 +32,7 @@ async def plivo_answer(request: Request):
         call_id = db_call["id"]
         log.info(f"[ANSWER] Matched call_id={call_id} for CallUUID={call_uuid}")
 
-    stream_url = f"{ws_url}/api/plivo/stream?call_uuid={call_uuid}&call_id={call_id}&to_number={to_number}"
+    stream_url = f"{ws_url}/api/plivo/stream?call_uuid={call_uuid}&amp;call_id={call_id}&amp;to_number={to_number}"
 
     xml = f"""<Response><Stream bidirectional="true" keepCallAlive="true" contentType="audio/x-mulaw;rate=8000">{stream_url}</Stream></Response>"""
 
