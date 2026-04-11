@@ -1,4 +1,9 @@
 import logging
+import os
+from dotenv import load_dotenv
+
+# Load environment variables from .env
+load_dotenv()
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger(__name__)
