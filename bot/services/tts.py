@@ -185,10 +185,18 @@ async def omnivoice_tts(text, voice_id=None, language="hindi"):
     replacements = {
         "packs": "पैक्स", "pack": "पैक", "pouches": "पाउचेस", "pouch": "पाउच",
         "units": "यूनिट्स", "unit": "यूनिट", "stock": "स्टॉक", "count": "काउंट",
-        "service": "सर्विस", "center": "सेंटर", "car": "कार", "booking": "बुकिंग"
+        "service": "सर्विस", "center": "सेंटर", "car": "कार", "booking": "बुकिंग",
+        "check": "चेक", "confirm": "कंफर्म", "kilometers": "किलोमीटर", "kilometer": "किलोमीटर",
+        "km": "किलोमीटर", "okay": "ओके", "ok": "ओके", "sir": "सर", "ma'am": "मैम"
     }
     for eng, hin in replacements.items():
         text = text.replace(f" {eng}", f" {hin}").replace(f"{eng} ", f"{hin} ")
+
+    # SAFETY CHECK: Prevent 'zero element' tensor error if text is empty or too short
+    clean_text = text.strip()
+    if not clean_text or len(clean_text) < 1:
+        log.warning("[TTS] Avoiding generation for empty/short text to prevent model crash.")
+        return None
 
     log.info(f"[TTS] Synthesizing with voice: {voice_id or 'default'} in language: {language}")
     
@@ -224,37 +232,68 @@ class TTSContext:
 
 async def stream_tts_to_plivo(text, tts_ctx, plivo_ws, voice_id=None, language="hindi"):
     """
-    Simulated streaming: generate whole sentence and send in chunks to Plivo.
+    Real Streaming: splits text into sentences and plays each as soon as its audio is ready.
+    This drastically reduces 'Time to First Word' latency.
     """
-    # Use a combined key for cache
-    cache_key = f"{text}_{voice_id}_{language}"
+    # 1. Split text into sentences (Hindi and English punctuation)
+    # We split by '।', '.', '?', '!'
+    import re
+    sentences = re.split(r'([।\.?!\n])', text)
     
-    if cache_key in TTS_CACHE:
-        mulaw = TTS_CACHE[cache_key]
-    else:
-        mulaw = await omnivoice_tts(text, voice_id, language)
-        if mulaw:
-             TTS_CACHE[cache_key] = mulaw
+    # Re-combine the markers into the sentences
+    final_sentences = []
+    current = ""
+    for s in sentences:
+        if s in ["।", ".", "?", "!", "\n"]:
+            current += s
+            if current.strip(): final_sentences.append(current.strip())
+            current = ""
+        else:
+            current += s
+    if current.strip(): final_sentences.append(current.strip())
 
-    if not mulaw:
+    if not final_sentences:
         return None
 
-    # Send in small chunks to simulate streaming feel
-    chunk_size = 320 # 20ms of audio
-    for i in range(0, len(mulaw), chunk_size):
-        chunk = mulaw[i:i+chunk_size]
-        await plivo_ws.send_text(json.dumps({
-            "event": "playAudio",
-            "media": {
-                "contentType": "audio/x-mulaw",
-                "sampleRate": "8000",
-                "payload": base64.b64encode(chunk).decode()
-            }
-        }))
-        # Small sleep to pace the "stream"
-        await asyncio.sleep(0.015) 
-        
-    return mulaw
+    log.info(f"[STREAM] Processing {len(final_sentences)} chunks for ultra-low latency.")
+    total_mulaw = b""
+
+    for sentence in final_sentences:
+        # Check cache first
+        cache_key = f"{sentence}_{voice_id}_{language}"
+        if cache_key in TTS_CACHE:
+            mulaw = TTS_CACHE[cache_key]
+            log.info(f"[STREAM] Cache HIT for chunk: {sentence[:30]}...")
+        else:
+            mulaw = await omnivoice_tts(sentence, voice_id, language)
+            if mulaw:
+                TTS_CACHE[cache_key] = mulaw
+
+        if not mulaw:
+            continue
+
+        total_mulaw += mulaw
+
+        # Send in small chunks to Plivo
+        chunk_size = 320 # 20ms
+        for i in range(0, len(mulaw), chunk_size):
+            chunk = mulaw[i:i+chunk_size]
+            try:
+                await plivo_ws.send_text(json.dumps({
+                    "event": "playAudio",
+                    "media": {
+                        "contentType": "audio/x-mulaw",
+                        "sampleRate": "8000",
+                        "payload": base64.b64encode(chunk).decode()
+                    }
+                }))
+            except:
+                break
+            
+            # Very small sleep to prevent Plivo overflow
+            await asyncio.sleep(0.002) 
+
+    return total_mulaw
 
 async def pre_connect():
     """Pre-load the model."""
