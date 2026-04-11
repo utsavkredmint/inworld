@@ -92,19 +92,15 @@ async def plivo_stream(websocket: WebSocket):
                 greeting = agent["greeting"]
                 system_prompt_override = agent["system_prompt"]
                 
-                # Mode Detection: Only inject SKUs if they exist
+                # Mode Detection: Only inject SKUs if it's an 'Inventory' specific agent
+                # (We check if the prompt actually mentions SKUs or if we are in a campaign)
                 skus = local_call_data.get("skus", [])
-                if skus:
+                if skus and ("SKU" in system_prompt_override or "inventory" in system_prompt_override.lower()):
                     skus_str = ", ".join(skus)
-                    current_time_str = local_call_data["current_time"]
-                    # Only replace if the marker exists, otherwise just append
-                    marker = "*** OBJECTIVE:"
-                    sku_info = f"*** SKUS FOR THIS CALL (ASK EXACTLY THESE): {skus_str}\n*** CURRENT TIME: {current_time_str}\n\n"
-                    if marker in system_prompt_override:
-                        system_prompt_override = system_prompt_override.replace(marker, f"{sku_info}{marker}")
-                    else:
-                        system_prompt_override = f"{sku_info}{system_prompt_override}"
-                    log.info(f"[AGENT] Inventory Mode: Injected SKUs: {skus_str}")
+                    current_time_str = local_call_data.get("current_time", "")
+                    sku_info = f"\n*** DATA FOR THIS CALL:\n- SKUS: {skus_str}\n- TIME: {current_time_str}\n"
+                    system_prompt_override = sku_info + system_prompt_override
+                    log.info(f"[AGENT] SKU Injection active for Inventory prompt.")
                 else:
                     log.info(f"[AGENT] Generic Mode: Using raw Dashboard prompt.")
                 
@@ -129,10 +125,10 @@ async def plivo_stream(websocket: WebSocket):
 
         name_injection = f"The person you are calling is {user_name}. Use their name naturally if appropriate."
         if system_prompt_override:
-            system_prompt_override += f"\n\n*** IMPORTANT: {name_injection}"
+            system_prompt_override += f"\n\n*** DATA: Caller Name is {user_name}."
         else:
             from services.llm import build_agent_prompt
-            system_prompt_override = build_agent_prompt(local_call_data) + f"\n\n*** IMPORTANT: {name_injection}"
+            system_prompt_override = build_agent_prompt(local_call_data) + f"\n\n*** DATA: Caller Name is {user_name}."
 
     # 🌍 Voice & Language Identity
     agent_language = agent.get("language", "hindi") if agent else "hindi"

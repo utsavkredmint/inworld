@@ -180,6 +180,16 @@ async def omnivoice_tts(text, voice_id=None, language="hindi"):
     except Exception as e:
         log.warning(f"[TTS] Could not align audio: {e}. Using original.")
 
+    # 🛠️ Text Normalization for better Pronunciation
+    # Normalize common Hinglish terms to Hindi script for smoother TTS flow
+    replacements = {
+        "packs": "पैक्स", "pack": "पैक", "pouches": "पाउचेस", "pouch": "पाउच",
+        "units": "यूनिट्स", "unit": "यूनिट", "stock": "स्टॉक", "count": "काउंट",
+        "service": "सर्विस", "center": "सेंटर", "car": "कार", "booking": "बुकिंग"
+    }
+    for eng, hin in replacements.items():
+        text = text.replace(f" {eng}", f" {hin}").replace(f"{eng} ", f"{hin} ")
+
     log.info(f"[TTS] Synthesizing with voice: {voice_id or 'default'} in language: {language}")
     
     start = time.time()
@@ -191,7 +201,7 @@ async def omnivoice_tts(text, voice_id=None, language="hindi"):
             ref_audio=ref_audio,
             ref_text=ref_text,
             language=language or "hindi",
-            num_inference_steps=30 # Balanced quality and speed
+            num_inference_steps=35 # Increased for better pronunciation clarity
         ))
         
         if not audio_list or len(audio_list) == 0:
