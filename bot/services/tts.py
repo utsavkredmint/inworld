@@ -37,35 +37,40 @@ _model_lock = asyncio.Lock()
 DEFAULT_REF_AUDIO = os.getenv("DEFAULT_REF_AUDIO", os.path.join(os.path.dirname(os.path.dirname(__file__)), "voices", "default_ref.mp3"))
 DEFAULT_REF_TEXT = os.getenv("DEFAULT_REF_TEXT", "नमस्ते, मैं आपकी सहायता के लिए तैयार हूँ।")
 
+async def init_tts():
+    """Warms up the model at server startup."""
+    log.info("[TTS] Warming up OmniVoice model...")
+    await _get_model()
+    log.info("[TTS] Warm-up complete.")
+
 async def _get_model():
     """Lazy load the OmniVoice model."""
     global _model
+    if _model is not None:
+        return _model
+        
     async with _model_lock:
         if _model is not None:
             return _model
         
         if OmniVoice is None:
-            log.error("[TTS] OmniVoice library not available. Please install it with: pip install git+https://github.com/k2-fsa/OmniVoice.git")
+            log.error("[TTS] OmniVoice library not available.")
             return None
 
-        log.info("[TTS] Loading OmniVoice model...")
-        log_device_info()
-        
+        log.info("[TTS] Initializing OmniVoice model on GPU...")
         try:
             device = get_device()
             dtype = get_dtype()
             
-            # For GPU servers, we want to ensure we don't crash if CUDA is busy or restricted
             _model = OmniVoice.from_pretrained(
                 "k2-fsa/OmniVoice",
                 device_map=device,
                 torch_dtype=dtype
             )
-            log.info(f"[TTS] OmniVoice model loaded successfully on {device} with {dtype}")
+            log.info(f"[TTS] OmniVoice model loaded successfully on {device}")
             return _model
         except Exception as e:
             log.error(f"[TTS] Failed to load OmniVoice: {e}")
-            log_device_info() # Log again to help debugging
             return None
 
 def resample_and_to_mulaw(audio_tensor, orig_sr=24000, target_sr=8000):
@@ -139,6 +144,34 @@ async def omnivoice_tts(text, voice_id=None, language="hindi"):
         if voice:
             ref_audio = _resolve_audio_path(voice["ref_audio_path"])
             ref_text = voice["ref_text"] or DEFAULT_REF_TEXT
+
+    # Optimization: Automatically trim reference audio if it's too long
+    # This is the biggest latency killer. 10s is plenty for quality.
+    try:
+        from pydub import AudioSegment
+        # We use a cache for the trimmed version to avoid re-trimming
+        # The trimmed files will be saved in voices/trimmed/
+        trimmed_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "voices", "trimmed")
+        if not os.path.exists(trimmed_dir):
+            os.makedirs(trimmed_dir)
+            
+        base_name = os.path.basename(ref_audio)
+        trimmed_path = os.path.join(trimmed_dir, f"t10_{base_name}")
+        
+        if not os.path.exists(trimmed_path):
+            audio = AudioSegment.from_file(ref_audio)
+            if len(audio) > 10000: # If longer than 10s
+                log.info(f"[TTS] Trimming reference audio {base_name} to 10s for speed.")
+                trimmed = audio[:10000]
+                trimmed.export(trimmed_path, format="wav") # Save as WAV for best quality
+            else:
+                # If already short, just use original or symlink
+                trimmed_path = ref_audio
+        
+        # Use the trimmed path for generation
+        ref_audio = trimmed_path
+    except Exception as e:
+        log.warning(f"[TTS] Could not trim audio: {e}. Using original.")
 
     log.info(f"[TTS] Synthesizing with voice: {voice_id or 'default'} in language: {language}")
     

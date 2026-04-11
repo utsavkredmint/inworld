@@ -17,6 +17,7 @@ from routes.stream import router as stream_router
 from routes.call import router as call_router
 from routes.api import router as api_router
 from routes.voices import router as voices_router
+from services.tts import init_tts
 
 app = FastAPI()
 
@@ -45,7 +46,8 @@ async def log_requests(request: Request, call_next):
 async def startup():
     log_device_info()
     init_db()
-    log.info("[DB] Database initialized")
+    await init_tts()
+    log.info("[DB] Database initialized and TTS Warmed up")
 
 
 if __name__ == "__main__":
