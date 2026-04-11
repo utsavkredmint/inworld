@@ -146,6 +146,8 @@ async def plivo_stream(websocket: WebSocket):
     # 🌍 Voice & Language Identity
     agent_language = agent.get("language", "hindi") if agent else "hindi"
     voice_id = agent.get("voice") if agent else None
+    log.info(f"[IDENTITY] Call initialized with Voice={voice_id}, Language={agent_language}")
+
     async def speak(text):
         nonlocal is_speaking, speak_start_ts
         tts_start = time.time()
