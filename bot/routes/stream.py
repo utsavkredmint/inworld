@@ -322,30 +322,35 @@ async def plivo_stream(websocket: WebSocket):
         log.info(f"[CACHE] Pre-cached {hits}/{len(templates)} phrases")
 
     async def _init_and_greet():
-        # Start setup in background (gather returns a future)
-        setup_future = asyncio.gather(stt_connect(), tts_ctx.open())
+        # 🔗 Start setup (ONLY if not already pre-connected)
+        setup_tasks = []
+        if not stt_pre_connected:
+            setup_tasks.append(stt_connect())
+        if not (pre_session and pre_session.get("tts_ctx")):
+            setup_tasks.append(tts_ctx.open())
+            
+        setup_future = asyncio.gather(*setup_tasks) if setup_tasks else asyncio.sleep(0)
         
-        # Wait for greeting TTS task (started earlier) to finish
+        # 🚀 Start speaking the greeting as soon as it's ready
         try:
-            greeting_audio = await asyncio.wait_for(greeting_task, timeout=1.5)
+            # We already started greeting_task at the top of websocket_endpoint
+            greeting_audio = await asyncio.wait_for(greeting_task, timeout=5.0)
             if greeting_audio:
-                log.info("[GREET] REST Greeting ready, speaking now.")
+                log.info("[GREET] OmniVoice Greeting ready, speaking now.")
                 await speak(greeting)
             else:
-                log.warning("[GREET] REST Greeting failed, waiting for setup...")
-                await setup_future
+                log.warning("[GREET] Greeting generation failed, speaking fallback.")
                 await speak(greeting)
         except Exception as e:
             log.error(f"[GREET] Greeting error: {e}")
-            await setup_future
             await speak(greeting)
 
         if call_id:
             add_message(call_id, "assistant", greeting)
         
-        # Ensure setup finishes
+        # Ensure any remaining setup finishes
         await setup_future
-        log.info("[SETUP] STT/TTS connected")
+        log.info("[SETUP] Call identity and streaming ready.")
         
         # Pre-cache in background while greeting plays
         asyncio.create_task(_pre_cache_skus())
