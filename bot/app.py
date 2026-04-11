@@ -6,6 +6,7 @@ log = logging.getLogger(__name__)
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from database import init_db
+from gpu_utils import log_device_info
 from routes.answer import router as answer_router
 from routes.stream import router as stream_router
 from routes.call import router as call_router
@@ -31,6 +32,7 @@ app.include_router(voices_router)
 
 @app.on_event("startup")
 async def startup():
+    log_device_info()
     init_db()
 
 

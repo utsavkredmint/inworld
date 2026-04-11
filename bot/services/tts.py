@@ -33,8 +33,9 @@ TTS_CACHE = {}
 _model = None
 _model_lock = asyncio.Lock()
 
-DEFAULT_REF_AUDIO = "/Users/utsav/Desktop/new/ElevenLabs_Text_to_Speech_audio.mp3"
-DEFAULT_REF_TEXT = "प्राचीन भूमि एल्डोरिया में, जहाँ आकाश रहस्यमय रंगों से रंगे हुए थे और जंगल पुराने रहस्यों को फुसफुसाते थे, वहाँ ज़ेफिरोस नाम का एक ड्रैगन रहता था।"
+# Reference audio and text defaults
+DEFAULT_REF_AUDIO = os.getenv("DEFAULT_REF_AUDIO", os.path.join(os.path.dirname(os.path.dirname(__file__)), "voices", "default_ref.mp3"))
+DEFAULT_REF_TEXT = os.getenv("DEFAULT_REF_TEXT", "नमस्ते, मैं आपकी सहायता के लिए तैयार हूँ।")
 
 async def _get_model():
     """Lazy load the OmniVoice model."""
@@ -44,23 +45,27 @@ async def _get_model():
             return _model
         
         if OmniVoice is None:
-            log.error("[TTS] OmniVoice library not available.")
+            log.error("[TTS] OmniVoice library not available. Please install it with: pip install git+https://github.com/k2-fsa/OmniVoice.git")
             return None
 
         log.info("[TTS] Loading OmniVoice model...")
         log_device_info()
         
         try:
-            # We use the user's recommended settings
+            device = get_device()
+            dtype = get_dtype()
+            
+            # For GPU servers, we want to ensure we don't crash if CUDA is busy or restricted
             _model = OmniVoice.from_pretrained(
                 "k2-fsa/OmniVoice",
-                device_map=get_device(),
-                torch_dtype=get_dtype()
+                device_map=device,
+                torch_dtype=dtype
             )
-            log.info("[TTS] OmniVoice model loaded successfully")
+            log.info(f"[TTS] OmniVoice model loaded successfully on {device} with {dtype}")
             return _model
         except Exception as e:
             log.error(f"[TTS] Failed to load OmniVoice: {e}")
+            log_device_info() # Log again to help debugging
             return None
 
 def resample_and_to_mulaw(audio_tensor, orig_sr=24000, target_sr=8000):

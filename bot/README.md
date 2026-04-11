@@ -247,3 +247,34 @@ T-minus amounts represent early payment discounts. ₹2,400 today vs ₹2,500 on
 - **Scaling**: The server handles one call at a time per worker. Use multiple uvicorn workers or container instances for concurrent calls.
 - **Error recovery**: STT/TTS WebSocket disconnects are handled with automatic reconnection. REST TTS fallback if WebSocket fails.
 - **Cost per call**: Deepgram ($0.0043/min) + Groq (free tier) + Inworld (~$5/1M chars) + Plivo (~₹0.5/min) ≈ **₹1-2 per call**.
+
+## 🚀 GPU Server Deployment
+
+This codebase is optimized for GPU servers (NVIDIA CUDA). Follow these steps to deploy:
+
+### 1. Requirements
+Ensure your server has NVIDIA drivers and CUDA installed.
+
+### 2. Install Dependencies
+Instead of a standard `pip install`, use the CUDA-enabled PyTorch version:
+
+```bash
+# Example for CUDA 11.8 (Adjust based on your server's CUDA version)
+pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu118
+pip install -r requirements.txt
+```
+
+### 3. Setup Default Voice
+The system expects a default reference voice at `bot/voices/default_ref.mp3`. 
+- Create the `voices` directory: `mkdir -p bot/voices`
+- Upload your `.mp3` sample there.
+
+### 4. GPU Detection
+On startup, the app will log:
+`[GPU-UTILS] Device: cuda | Dtype: torch.float16`
+If you see `Device: cpu`, check your PyTorch installation or GPU availability.
+
+### 5. Running
+```bash
+./run.sh
+```

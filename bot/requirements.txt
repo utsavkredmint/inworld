@@ -9,3 +9,4 @@ torch
 torchaudio
 pydub
 static-ffmpeg
+git+https://github.com/k2-fsa/OmniVoice.git
