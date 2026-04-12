@@ -132,10 +132,13 @@ async def plivo_stream(websocket: WebSocket):
 
     # 🌍 Voice & Language Identity
     agent_language = agent.get("language", "hindi") if agent else "hindi"
+    # Alias 'hinglish' to 'hi' for the TTS engine
+    tts_language = "hi" if agent_language.lower() == "hinglish" else agent_language
     voice_id = agent.get("voice") if agent else None
-    
+    log.info(f"[TTS] Synthesizing with voice: {voice_id or 'default'} in language: {agent_language} (target: {tts_language})")
+
     # 🔥 HOT LATENCY FIX: Start generating greeting TTS IMMEDIATELY
-    greeting_task = asyncio.create_task(omnivoice_tts(greeting, voice_id=voice_id, language=agent_language))
+    greeting_task = asyncio.create_task(omnivoice_tts(greeting, voice_id=voice_id, language=tts_language))
 
     # Check for pre-setup session (STT + TTS already connected)
     from call_sessions import get_session
@@ -157,12 +160,8 @@ async def plivo_stream(websocket: WebSocket):
     stt_pre_connected = bool(pre_session and pre_session.get("stt_ready"))
     last_stock = {}
     
-    # 🌍 Voice & Language Identity
-    agent_language = agent.get("language", "hindi") if agent else "hindi"
-    # Alias 'hinglish' to 'hi' for the TTS engine
-    tts_language = "hi" if agent_language.lower() == "hinglish" else agent_language
-    voice_id = agent.get("voice") if agent else None
-    log.info(f"[TTS] Synthesizing with voice: {voice_id or 'default'} in language: {agent_language} (target: {tts_language})")
+    # (Language logic moved up for greeting_task)
+    log.info(f"[TTS] Session active for {voice_id or 'default'} in target language: {tts_language}")
 
     # ── Internal Helpers ──
     async def _play_filler():

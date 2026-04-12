@@ -302,8 +302,10 @@ async def stream_tts_to_plivo(text, tts_ctx, plivo_ws, voice_id=None, language="
             chunk = mulaw[i:i+chunk_size]
             try:
                 msg = {
-                    "event": "media", # Plivo event for streaming media is 'media'
+                    "event": "playAudio",
                     "media": {
+                        "contentType": "audio/x-mulaw",
+                        "sampleRate": "8000",
                         "payload": base64.b64encode(chunk).decode()
                     }
                 }
