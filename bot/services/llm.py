@@ -88,14 +88,9 @@ async def get_agent_response_stream(
         role = "Bot" if h["role"] == "assistant" else "User"
         hist_str += f"{role}: {h['content']}\n"
 
-    user_msg = (
-        f"CURRENT_STATE: {state}\n"
-        f"CURRENT_STOCK: {json.dumps(current_stock)}\n"
-        f"LAST_BOT_MESSAGE: {last_bot_msg}\n"
-        f"HISTORY:\n{hist_str}"
-        f"USER_SAID: {user_text}"
-    )
-
+    user_msg = user_text
+    
+    # 2. Get prompt
     prompt = system_prompt_override if system_prompt_override else build_agent_prompt(call_data)
     if not is_generic:
         prompt += "\n*** CRITICAL RUNTIME RULES:\n1. NEVER repeat last bot message.\n2. NEVER ask same SKU again.\n3. If all SKUs filled → terminate true.\n4. If user exit intent → terminate true.\n"
@@ -144,8 +139,11 @@ async def get_agent_response_stream(
                     s = (sentences[i] + sentences[i+1]).strip()
                     # Only yield if sentence contains actual words (prevent TTS crashes on dots)
                     if s and s not in sent_sentences and re.search(r'[\w\u0900-\u097F]', s):
-                        yield (s, False, None)
-                        sent_sentences.add(s)
+                        # Clean special characters out of the sentence before yielding
+                        s = re.sub(r'["\-_*]', ' ', s).strip()
+                        if s:
+                            yield (s, False, None)
+                            sent_sentences.add(s)
 
         # --- Final Cleanup ---
         raw = full_content.strip()

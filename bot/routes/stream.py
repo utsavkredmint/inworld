@@ -144,7 +144,7 @@ async def plivo_stream(websocket: WebSocket):
     from call_sessions import get_session
     pre_session = get_session(call_id) if call_id else None
 
-    history = []
+    history = [{"role": "assistant", "content": greeting}]
     is_speaking = False
     filler_cache = {}
     stream_sid = None
@@ -194,6 +194,14 @@ async def plivo_stream(websocket: WebSocket):
 
     async def speak(text, is_filler=False, language=None):
         nonlocal is_speaking, speak_start_ts
+        import re
+        # Safety: If text is empty or just dots/punctuation, skip TTS generation
+        clean_text = re.sub(r'[^\w\s\u0900-\u097F]', ' ', text).strip()
+        if not clean_text:
+            log.warning(f"[TTS] Skipping empty/punctuation-only text: '{text}'")
+            return None
+        text = clean_text # Use the cleaned text for generation
+
         tts_start = time.time()
         is_speaking = True
         speak_start_ts = time.time()
