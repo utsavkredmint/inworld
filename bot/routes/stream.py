@@ -211,7 +211,7 @@ async def plivo_stream(websocket: WebSocket):
         else:
             log.info(f"[SPEAK] Streaming TTS for: {text[:40]}... (ctx_ready={tts_ctx.ready})")
             # This streams directly to Plivo WebSocket internally!
-            audio = await stream_tts_to_plivo(text, tts_ctx, websocket, voice_id=voice_id, language=target_tts_lang)
+            audio = await stream_tts_to_plivo(text, tts_ctx, websocket, voice_id=voice_id, language=target_tts_lang, stream_sid=stream_sid)
             # Fallback to omnivoice_tts if streaming didn't work
             if not audio:
                 log.info(f"[SPEAK] Fallback to direct TTS for: {text[:40]}")
