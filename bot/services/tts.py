@@ -230,7 +230,7 @@ async def omnivoice_tts(text, voice_id=None, language="hindi"):
             ref_audio=ref_audio,
             ref_text=ref_text,
             language=language or "hindi",
-            num_inference_steps=45 # Increased from 35 for sharper words
+            num_inference_steps=25 # Reduced from 45 for ultra-low latency
         ))
         
         if not audio_list or len(audio_list) == 0:

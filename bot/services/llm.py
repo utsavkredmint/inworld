@@ -69,7 +69,7 @@ If user says:
 """
 
 
-async def get_agent_response(
+async def get_agent_response_stream(
     state,
     last_bot_msg,
     history,
@@ -77,8 +77,12 @@ async def get_agent_response(
     call_data,
     current_stock,
     system_prompt_override=None,
-    is_generic=False # New flag to bypass inventory logic
+    is_generic=False
 ):
+    """
+    Streaming version of get_agent_response.
+    Yields: (sentence_text, is_final, data_dict)
+    """
     hist_str = ""
     for h in history[-5:]:
         role = "Bot" if h["role"] == "assistant" else "User"
@@ -92,35 +96,16 @@ async def get_agent_response(
         f"USER_SAID: {user_text}"
     )
 
-    raw = ""
+    prompt = system_prompt_override if system_prompt_override else build_agent_prompt(call_data)
+    if not is_generic:
+        prompt += "\n*** CRITICAL RUNTIME RULES:\n1. NEVER repeat last bot message.\n2. NEVER ask same SKU again.\n3. If all SKUs filled → terminate true.\n4. If user exit intent → terminate true.\n"
+    else:
+        prompt += "\n*** RUNTIME RULES:\n1. Follow the OBJECTIVE strictly.\n2. Keep responses natural.\n3. If user wants to end → set \"terminate\": true.\n"
+    
+    prompt += '\n*** FORMAT: JSON ONLY\n{"response": "reply", "state": "current_state", "terminate": false, "stock": {}}\n'
 
     try:
-        prompt = system_prompt_override if system_prompt_override else build_agent_prompt(call_data)
-
-        if not is_generic:
-            # 🔥 INVENTORY SPECIFIC RULES
-            prompt += """
-*** CRITICAL RUNTIME RULES:
-1. NEVER repeat last bot message.
-2. NEVER ask same SKU again.
-3. If all SKUs filled → terminate true.
-4. If user exit intent → terminate true.
-"""
-        else:
-            # 🔥 GENERIC AGENT RULES (Optimized for Kia/Sales)
-            prompt += """
-*** RUNTIME RULES:
-1. Follow the OBJECTIVE strictly.
-2. Keep responses natural and conversational.
-3. If user wants to end → set "terminate": true.
-4. Extract provided information (date, time, KM) and store it in your internal state.
-5. ANTI-HALLUCINATION: If user input is very short (1-2 words) or ambiguous (e.g., "I", "But", "Wait"), DO NOT jump to the next step. Instead, acknowledge and wait for them to finish their sentence.
-"""
-
-        # ALWAYS required for either type
-        prompt += '\n*** FORMAT: JSON ONLY\n{"response": "reply", "state": "current_state", "terminate": false, "stock": {}}\n'
-
-        comp = await groq_client.chat.completions.create(
+        stream = await groq_client.chat.completions.create(
             model="llama-3.1-8b-instant",
             messages=[
                 {"role": "system", "content": prompt},
@@ -128,65 +113,64 @@ async def get_agent_response(
             ],
             max_tokens=250,
             temperature=0,
-            stream=False,
-            response_format={"type": "json_object"}
+            stream=True
         )
 
-        raw = comp.choices[0].message.content.strip()
+        full_content = ""
+        sent_sentences = set()
+        import re
+        
+        async for chunk in stream:
+            content = chunk.choices[0].delta.content
+            if not content:
+                continue
+            full_content += content
+            
+            match = re.search(r'"response":\s*"([^"]*)', full_content)
+            if match:
+                extracted_text = match.group(1)
+                
+                sentences = re.split(r'([।\.?!\n])', extracted_text)
+                for i in range(0, len(sentences)-1, 2):
+                    s = sentences[i] + sentences[i+1]
+                    s = s.strip()
+                    if s and s not in sent_sentences:
+                        yield (s, False, None)
+                        sent_sentences.add(s)
 
-        # साफ JSON parsing
+        raw = full_content.strip()
         if raw.startswith("```"):
             raw = raw.split("```")[1]
-            if raw.startswith("json"):
-                raw = raw[4:]
+            if raw.startswith("json"): raw = raw[4:]
             raw = raw.strip()
-
-        data = json.loads(raw)
-
-        response = data.get("response", "")
-        next_state = data.get("state", state)
-        terminate = data.get("terminate", False)
-        stock = data.get("stock", {})
-
-        # 🚨 HARD GUARD 1: prevent repetition loop
-        if response.strip() == last_bot_msg.strip():
-            log.warning("Repeat detected → forcing termination")
-            return ("धन्यवाद, आपका दिन शुभ हो।", state, True, current_stock)
-
-        # 🚨 HARD GUARD 2: user exit detection (code level)
-        exit_keywords = ["busy", "baad", "बाद", "फोन काट", "मत कॉल", "नहीं बात"]
-        if any(k in user_text.lower() for k in exit_keywords):
-            return ("ठीक है, धन्यवाद!", state, True, current_stock)
-
-        # 🚨 HARD GUARD 3: prevent asking already filled SKU
-        for sku, val in current_stock.items():
-            if val is not None and sku in response:
-                log.warning("Asking already filled SKU → fixing")
-                return ("धन्यवाद, आपका दिन शुभ हो।", state, True, current_stock)
-
-        # merge stock safely (Only for inventory agents)
-        if not is_generic:
-            updated_stock = current_stock.copy()
-            expected_skus = call_data.get("skus", [])
-            for sku in expected_skus:
-                if sku not in updated_stock:
-                    updated_stock[sku] = None
-
-            for k, v in stock.items():
-                if updated_stock.get(k) is None:
-                    updated_stock[k] = v
-
-            # 🚨 AUTO CLOSE: only for inventory bots
-            if expected_skus and all(updated_stock.get(sku) is not None for sku in expected_skus):
-                return ("धन्यवाद, आपका दिन शुभ हो।", state, True, updated_stock)
-            
-            return (response, next_state, terminate, updated_stock)
         
-        # For Generic Agents, just return the raw response
-        return (response, next_state, terminate, {})
+        try:
+            data = json.loads(raw)
+            resp = data.get("response", "")
+            for s in re.split(r'(?<=[।\.?!\n])', resp):
+                s = s.strip()
+                if s and s not in sent_sentences:
+                    yield (s, False, None)
+                    sent_sentences.add(s)
+            
+            yield (None, True, data)
+        except:
+            log.error(f"[LLM] Final JSON parse failed: {raw}")
+            yield (None, True, {"response": "जी, समझ नहीं आया।", "state": state, "terminate": False})
 
     except Exception as e:
-        log.error(f"LLM error: {e} | raw: {raw if raw else 'None'}")
+        log.error(f"[LLM] Stream error: {e}")
+        yield ("जी, समझ नहीं आया।", True, {"response": "error", "state": state, "terminate": False})
 
-        # fallback safe response - DON'T terminate on single error
-        return ("जी, समझ नहीं आया। क्या आप फिर से बता सकते हैं?", state, False, current_stock)
+async def get_agent_response(
+    state, last_bot_msg, history, user_text, call_data, current_stock,
+    system_prompt_override=None, is_generic=False
+):
+    """Fallback legacy wrapper for non-streaming usage."""
+    async for text, is_final, data in get_agent_response_stream(
+        state, last_bot_msg, history, user_text, call_data, current_stock,
+        system_prompt_override, is_generic
+    ):
+        if is_final:
+            return data.get("response", ""), data.get("state", state), data.get("terminate", False), data.get("stock", {})
+    return "जी, समझ नहीं आया।", state, False, {}

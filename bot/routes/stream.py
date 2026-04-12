@@ -13,7 +13,7 @@ from config import PLIVO_AUTH_ID, PLIVO_AUTH_TOKEN, CALL_DATA, GREETING
 from database import get_call, get_agent, add_message, update_call
 from services.tts import omnivoice_tts, stream_tts_to_plivo, TTSContext, TTS_CACHE, prepare_for_tts
 from services.stt import send_audio_chunk, get_final_transcript, connect as stt_connect, disconnect as stt_disconnect
-from services.llm import get_agent_response
+from services.llm import get_agent_response, get_agent_response_stream
 from core.conversation import INTRO, STATE_ORDER
 from core.vad import SileroVAD
 
@@ -249,57 +249,53 @@ async def plivo_stream(websocket: WebSocket):
         vad.reset()
 
     async def _process_text(text, target_lang=None):
-        """Process a transcript: LLM → TTS → speak."""
+        """Process a transcript: LLM Stream → TTS → speak."""
         nonlocal call_state, last_bot_response, last_stock
 
         start_proc = time.time()
-
-        # LLM
         llm_start = time.time()
-        full_resp, next_state, terminate_call, stock = await get_agent_response(
-            call_state, last_bot_response, history, text, local_call_data, last_stock,
+        
+        full_resp = ""
+        current_data = None
+
+        async for sentence_text, is_final, data in get_agent_response_stream(
+            call_state, last_bot_msg=last_bot_response, history=history, user_text=text,
+            call_data=local_call_data, current_stock=last_stock,
             system_prompt_override=system_prompt_override,
             is_generic=is_generic_agent
-        )
+        ):
+            if not is_final and sentence_text:
+                # 🚀 IMMEDIATE TTS for the first and subsequent sentences!
+                if not full_resp:
+                    ms_to_first = int((time.time() - start_proc) * 1000)
+                    log.info(f"[STREAM] First sentence from LLM in {ms_to_first}ms: '{sentence_text}'")
+                
+                full_resp += " " + sentence_text
+                asyncio.create_task(speak(sentence_text, language=target_lang))
+            
+            if is_final:
+                current_data = data
+
+        if not current_data:
+            return
+
+        full_resp = full_resp.strip()
+        next_state = current_data.get("state", call_state)
+        terminate_call = current_data.get("terminate", False)
+        stock = current_data.get("stock", {})
+
         if stock:
-            last_stock.update(stock)  # MERGE — never overwrite previous SKU values
-            log.info(f"[STOCK] {last_stock}")
+            last_stock.update(stock)
+        
         llm_ms = int((time.time() - llm_start) * 1000)
 
-        # CODE-LEVEL AUTO-TERMINATE: If all SKUs are answered, force terminate immediately
-        expected_skus = local_call_data.get("skus", [])
-        if expected_skus and all(last_stock.get(sku) is not None for sku in expected_skus):
-            farewell = "धन्यवाद, आपका दिन शुभ हो।"
-            log.info(f"[AUTO-TERMINATE] All SKUs filled. Terminating call.")
-            await speak(farewell, language=target_lang)
-            if call_id:
-                add_message(call_id, "user", text)
-                add_message(call_id, "assistant", farewell)
-            try:
-                plivo_client.calls.group_hangup(call_uuid)
-            except:
-                try:
-                    plivo_client.calls.hangup(call_uuid)
-                except:
-                    pass
-            return "TERMINATE"
-
-        # State guard: forward only — NEVER go back to INTRO
+        # State guard
         cur_order = STATE_ORDER.get(call_state, 0)
         new_order = STATE_ORDER.get(next_state, 0)
-        if new_order < cur_order:
-            next_state = call_state
-        # Extra guard: never allow going back to INTRO once in STOCK
-        if call_state != "INTRO" and next_state == "INTRO":
-            next_state = call_state
+        if new_order < cur_order: next_state = call_state
+        if call_state != "INTRO" and next_state == "INTRO": next_state = call_state
 
         call_state = next_state
-
-        ms_total = int((time.time() - start_proc) * 1000)
-        log.info(
-            f"[{call_state}] LATENCY: {ms_total}ms (llm={llm_ms}ms) "
-            f"| User: '{text}' | Response: {full_resp}"
-        )
         last_bot_response = full_resp
 
         # Save to DB
@@ -308,21 +304,16 @@ async def plivo_stream(websocket: WebSocket):
             add_message(call_id, "assistant", full_resp)
 
         if terminate_call:
-            await speak(full_resp, language=target_lang)
             log.info(f"Terminating Call: {call_uuid}")
-            try:
-                plivo_client.calls.group_hangup(call_uuid)
-            except:
-                try:
-                    plivo_client.calls.hangup(call_uuid)
-                except:
-                    pass
+            try: plivo_client.calls.group_hangup(call_uuid)
+            except: pass
             return "TERMINATE"
-        else:
-            asyncio.create_task(speak(full_resp, language=target_lang))
 
         history.append({"role": "user", "content": text})
         history.append({"role": "assistant", "content": full_resp})
+        
+        ms_total = int((time.time() - start_proc) * 1000)
+        log.info(f"[{call_state}] TOTAL LATENCY: {ms_total}ms (llm_total={llm_ms}ms)")
 
     async def _pre_cache_skus():
         """Pre-generate TTS for all SKU questions in parallel — so first response is instant."""
