@@ -113,7 +113,8 @@ async def get_agent_response_stream(
             ],
             max_tokens=250,
             temperature=0,
-            stream=True
+            stream=True,
+            response_format={"type": "json_object"} # Re-enforce JSON mode
         )
 
         full_content = ""
@@ -126,18 +127,26 @@ async def get_agent_response_stream(
                 continue
             full_content += content
             
+            # --- Robust Streaming Extraction ---
+            # Try to extract the "response" field if it exists
             match = re.search(r'"response":\s*"([^"]*)', full_content)
+            extracted_text = ""
             if match:
                 extracted_text = match.group(1)
-                
+            elif not full_content.strip().startswith("{"):
+                # Fallback: If LLM is not outputting JSON at all, treat whole thing as text
+                extracted_text = full_content.strip()
+
+            if extracted_text:
+                # Split and yield sentences as they complete
                 sentences = re.split(r'([।\.?!\n])', extracted_text)
                 for i in range(0, len(sentences)-1, 2):
-                    s = sentences[i] + sentences[i+1]
-                    s = s.strip()
+                    s = (sentences[i] + sentences[i+1]).strip()
                     if s and s not in sent_sentences:
                         yield (s, False, None)
                         sent_sentences.add(s)
 
+        # --- Final Cleanup ---
         raw = full_content.strip()
         if raw.startswith("```"):
             raw = raw.split("```")[1]
