@@ -332,29 +332,9 @@ async def plivo_stream(websocket: WebSocket):
         log.info(f"[{call_state}] TOTAL LATENCY: {ms_total}ms (llm_total={llm_ms}ms)")
 
     async def _pre_cache_skus():
-        """Pre-generate TTS for all SKU questions in parallel — so first response is instant."""
-        skus = local_call_data.get("skus", [])
-        templates = []
-        for sku in skus:
-            # Map SKU to Hindi name + unit for question
-            if "Khajoor Pouch" in sku:
-                hindi = f"खजूर पाउच के कितने pouches बचे हैं"
-            elif "Khajoor Dispenser" in sku:
-                hindi = f"खजूर डिस्पेंसर के कितने dispensers बचे हैं"
-            elif "Rajnigandha" in sku:
-                parts = sku.replace("Rajnigandha", "रजनीगंधा")
-                hindi = f"{parts} के कितने packs बचे हैं"
-            else:
-                hindi = f"{sku} का stock क्या है"
-            templates.append(f"ठीक है, {hindi}?")
-        # Also cache common short responses
-        templates += [
-            "ठीक है",
-            "अच्छा",
-            "धन्यवाद"
-        ]
-        log.info(f"[CACHE] Pre-generating TTS for {len(templates)} phrases SEQUENTIALLY...")
-        # Sequential pre-caching to avoid GPU overloading
+        """Pre-generate TTS for essentials only to avoid 429 Rate Limits."""
+        templates = ["ठीक है", "अच्छा", "जी"]
+        log.info(f"[CACHE] Pre-generating TTS for {len(templates)} phrases to avoid 429 Rate Limits...")
         for t in templates:
             try:
                 # Add a small delay between tasks to prioritize real-time replies

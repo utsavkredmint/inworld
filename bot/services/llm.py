@@ -142,7 +142,8 @@ async def get_agent_response_stream(
                 sentences = re.split(r'([।\.?!\n])', extracted_text)
                 for i in range(0, len(sentences)-1, 2):
                     s = (sentences[i] + sentences[i+1]).strip()
-                    if s and s not in sent_sentences:
+                    # Only yield if sentence contains actual words (prevent TTS crashes on dots)
+                    if s and s not in sent_sentences and re.search(r'[\w\u0900-\u097F]', s):
                         yield (s, False, None)
                         sent_sentences.add(s)
 
@@ -151,7 +152,10 @@ async def get_agent_response_stream(
         if raw.startswith("```"):
             raw = raw.split("```")[1]
             if raw.startswith("json"): raw = raw[4:]
-            raw = raw.strip()
+            # Filter out text that is only punctuation or empty to prevent TTS crashes
+            clean = re.sub(r'[^\w\s]', '', raw).strip()
+            if not clean or len(clean) == 0:
+                raw = "{}"
         
         try:
             data = json.loads(raw)

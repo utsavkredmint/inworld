@@ -139,8 +139,17 @@ def _resolve_audio_path(path):
     
     return path
 
-async def omnivoice_tts(text, voice_id=None, language="hindi"):
-    """Generate audio using OmniVoice."""
+async def omnivoice_tts(text, voice_id=None, language=None):
+    """
+    Directly generates audio byte buffer using OmniVoice model.
+    """
+    # Safety: If text is empty or just dots/punctuation, skip TTS generation
+    import re
+    clean_text = re.sub(r'[^\w\s\u0900-\u097F]', '', text).strip()
+    if not clean_text:
+        log.warning(f"[TTS] Skipping empty/punctuation-only text: '{text}'")
+        return None
+
     model = await _get_model()
     if not model:
         log.error("[TTS] Model not loaded.")
