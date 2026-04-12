@@ -159,11 +159,22 @@ async def plivo_stream(websocket: WebSocket):
     tts_ctx = pre_session["tts_ctx"] if pre_session else TTSContext()
     stt_pre_connected = bool(pre_session and pre_session.get("stt_ready"))
     last_stock = {}
-    
-    # (Language logic moved up for greeting_task)
-    log.info(f"[TTS] Session active for {voice_id or 'default'} in target language: {tts_language}")
+    speak_queue = asyncio.Queue()
 
     # ── Internal Helpers ──
+    async def speak_worker():
+        """Consumes sentences from the queue and speaks them sequentially."""
+        while True:
+            try:
+                text, lang = await speak_queue.get()
+                if text is None: break # Shutdown signal
+                await speak(text, language=lang)
+                speak_queue.task_done()
+            except Exception as e:
+                log.error(f"[SPEAK-WORKER] Error: {e}")
+                await asyncio.sleep(0.1)
+
+    worker_task = asyncio.create_task(speak_worker())
     async def _play_filler():
         try:
             if not filler_cache: return
@@ -271,7 +282,7 @@ async def plivo_stream(websocket: WebSocket):
                     log.info(f"[STREAM] First sentence from LLM in {ms_to_first}ms: '{sentence_text}'")
                 
                 full_resp += " " + sentence_text
-                asyncio.create_task(speak(sentence_text, language=target_lang))
+                await speak_queue.put((sentence_text, target_lang))
             
             if is_final:
                 current_data = data
@@ -476,7 +487,7 @@ async def plivo_stream(websocket: WebSocket):
                 if text and not is_speaking:
                     asyncio.create_task(_play_filler())
 
-                # Process the transcript
+                # 2. Start STT Transcript Loop
                 result = await _process_text(text, target_lang=tts_language)
                 if result == "TERMINATE":
                     break
@@ -507,5 +518,7 @@ async def plivo_stream(websocket: WebSocket):
             log.info(f"[DB] Call {call_id} saved (duration={duration}s)")
 
         await stt_disconnect()
+        # Final Cleanup
+        await worker_task
         await tts_ctx.close()
         await session.close()
