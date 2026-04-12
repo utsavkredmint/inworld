@@ -257,6 +257,11 @@ async def plivo_stream(websocket: WebSocket):
             except:
                 pass
         is_speaking = False
+        # If we were interrupted, clear the queue to prevent old sentences from playing
+        if interrupt_event.is_set():
+            while not speak_queue.empty():
+                try: speak_queue.get_nowait()
+                except: break
         vad.reset()
 
     async def _process_text(text, target_lang=None):
@@ -474,10 +479,17 @@ async def plivo_stream(websocket: WebSocket):
                     # This prevents background noise or 'umm/hmm' from interrupting the flow.
                     word_count = len(text.split())
                     if word_count >= 4:
-                        interrupt_event.set()
-                        log.info(f"[INTERRUPT] Substantial user speech: '{text}' (words={word_count})")
-                        while is_speaking:
-                            await asyncio.sleep(0.05)
+                        # Interrupt current speech and CLEAR pending queue
+                        if text:
+                            log.info(f"[INTERRUPT] Substantial user speech: '{text}' (words={len(text.split())})")
+                            # Set event to stop current sentence
+                            interrupt_event.set()
+                            # Clear the queue so subsequent sentences from the old LLM response don't play
+                            while not speak_queue.empty():
+                                try: speak_queue.get_nowait()
+                                except: break
+                            while is_speaking:
+                                await asyncio.sleep(0.05)
                     else:
                         log.info(f"[SKIP] Short snippet while bot speaking: '{text}' — ignoring.")
                         continue 
