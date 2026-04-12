@@ -14,7 +14,7 @@ DG_URL = (
     "&model=nova-3"
     "&language=hi"
     "&interim_results=true"
-    "&endpointing=500"
+    "&endpointing=250"
     "&smart_format=false"
     "&punctuate=false"
 )
