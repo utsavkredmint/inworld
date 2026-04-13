@@ -1,6 +1,7 @@
 import asyncio
 import audioop
 import base64
+from concurrent.futures import ThreadPoolExecutor
 import io
 import json
 import logging
@@ -35,6 +36,7 @@ _model_lock = asyncio.Lock()
 _resampler = None # 🚀 LATENCY WIN: Pre-instantiated resampler
 _resampler_lock = asyncio.Lock()
 _TRIMMED_VOICE_CACHE = {} # 🚀 LATENCY WIN: Cache trimmed voice paths
+_tts_executor = ThreadPoolExecutor(max_workers=1) # 🚀 LATENCY WIN: Serial execution
 
 # Reference audio and text defaults
 DEFAULT_REF_AUDIO_NAME = os.getenv("DEFAULT_REF_AUDIO_NAME", "default_ref.mp3")
@@ -288,15 +290,18 @@ async def omnivoice_tts(text, voice_id=None, language="hindi", num_inference_ste
     
     start = time.time()
     try:
-        # OmniVoice generate is usually blocking, we run in executor
-        loop = asyncio.get_event_loop()
-        audio_list = await loop.run_in_executor(None, lambda: model.generate(
-            text=text,
-            ref_audio=ref_audio,
-            ref_text=ref_text,
-            language=language or "hindi",
-            num_inference_steps=num_inference_steps # Custom steps for speed/quality trade-off
-        ))
+        # 🚀 LATENCY WIN: Serialize GPU access. 
+        # Parallel generation causes CUDA contention (1.8s spikes). 
+        # Serial access ensures Chunk 0 finishes in ~600ms.
+        async with _model_lock:
+            loop = asyncio.get_event_loop()
+            audio_list = await loop.run_in_executor(_tts_executor, lambda: model.generate(
+                text=text,
+                ref_audio=ref_audio,
+                ref_text=ref_text,
+                language=language or "hindi",
+                num_inference_steps=num_inference_steps
+            ))
         
         if not audio_list or len(audio_list) == 0:
             return None
