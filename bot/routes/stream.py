@@ -126,8 +126,8 @@ async def plivo_stream(websocket: WebSocket):
                     await asyncio.sleep(0.01)
                 
                 if interrupt_event.is_set():
-                    # Wait for interrupt to clear (managed by transcript_loop)
-                    # and reset our local index
+                    is_speaking = False # 🚀 UNLOCK transcript_loop
+                    # Wait for interrupt to clear (managed by _process_text)
                     while interrupt_event.is_set():
                         await asyncio.sleep(0.05)
                     current_idx = 0
@@ -293,8 +293,7 @@ async def plivo_stream(websocket: WebSocket):
                         try: await websocket.send_text(json.dumps({"event": "clearAudio", "streamSid": stream_sid}))
                         except: pass
                         audio_buffer.clear()
-                        
-                        while is_speaking: await asyncio.sleep(0.01)
+                        # 🚀 REMOVED: while is_speaking wait (CAUSED DEADLOCK)
                     else: continue
                 
                 log.info(f"[USER] {text}")
