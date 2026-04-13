@@ -111,10 +111,12 @@ async def plivo_stream(websocket: WebSocket):
 
     async def speak(text, is_filler=False, language=None):
         nonlocal is_speaking
-        # 🚀 CRITICAL: Unified SID Wait
         if not stream_sid:
-            log.info(f"[SPEAK] Syncing SID for: {text[:20]}...")
-            await stream_ready_event.wait()
+            log.info(f"[SPEAK] Waiting for SID to speak: {text[:20]}...")
+            try:
+                await asyncio.wait_for(stream_ready_event.wait(), timeout=2.0)
+            except asyncio.TimeoutError:
+                log.warning("[SPEAK] Timeout waiting for SID. Proceeding anyway.")
             
         is_speaking = True
         interrupt_event.clear()
@@ -125,29 +127,48 @@ async def plivo_stream(websocket: WebSocket):
         audio = None
         if cache_key in TTS_CACHE:
             audio = TTS_CACHE[cache_key]
-            msg = {"event": "media", "media": {"payload": base64.b64encode(audio).decode()}, "streamSid": stream_sid}
-            await websocket.send_text(json.dumps(msg))
+            log.info(f"[SPEAK] Cache HIT: {text[:40]} | Bytes: {len(audio)}")
+            # 🚀 CHUNKING: Send cached audio in small parts to prevent Plivo overflow
+            chunk_size = 640 # 80ms
+            try:
+                for i in range(0, len(audio), chunk_size):
+                    if interrupt_event.is_set(): break
+                    chunk = audio[i:i+chunk_size]
+                    msg = {
+                        "event": "media",
+                        "media": {
+                            "payload": base64.b64encode(chunk).decode()
+                        },
+                        "streamSid": stream_sid,
+                        "streamId": stream_sid
+                    }
+                    await websocket.send_text(json.dumps(msg))
+                    # Buffer management: sleep 0.02s to match real-time better
+                    await asyncio.sleep(0.02)
+            except Exception as e:
+                log.error(f"[STREAM] WS Send Error: {e}")
         else:
-            # Try streaming TTS
-            pre_ctx = pre_session["tts_ctx"] if 'pre_session' in locals() and pre_session else None
-            audio = await stream_tts_to_plivo(text, pre_ctx or TTSContext(), websocket, voice_id=voice_id, language=target_tts_lang, stream_sid=stream_sid)
+            log.info(f"[SPEAK] Streaming TTS: {text[:40]}")
+            audio = await stream_tts_to_plivo(text, TTSContext(), websocket, voice_id=voice_id, language=target_tts_lang, stream_sid=stream_sid)
             if not audio:
-                # Fallback to full gen if streaming failed
+                log.info(f"[SPEAK] Fallback TTS: {text[:40]}")
                 audio = await omnivoice_tts(text, voice_id=voice_id, language=target_tts_lang)
                 if audio:
-                    msg = {"event": "media", "media": {"payload": base64.b64encode(audio).decode()}, "streamSid": stream_sid}
+                    msg = {"event": "media", "media": {"payload": base64.b64encode(audio).decode()}, "streamSid": stream_sid, "streamId": stream_sid}
                     await websocket.send_text(json.dumps(msg))
 
         if not audio:
             is_speaking = False
             return
 
+        # Wait for actual playback to finish (heuristic)
         duration = len(audio) / 8000
         try:
             await asyncio.wait_for(interrupt_event.wait(), timeout=duration)
         except asyncio.TimeoutError: pass
         if interrupt_event.is_set():
-            await websocket.send_text(json.dumps({"event": "clearAudio", "streamSid": stream_sid}))
+            try: await websocket.send_text(json.dumps({"event": "clearAudio", "streamSid": stream_sid, "streamId": stream_sid}))
+            except: pass
         is_speaking = False
         vad.reset()
 
@@ -155,6 +176,11 @@ async def plivo_stream(websocket: WebSocket):
         nonlocal call_state, last_bot_response, last_stock
         full_text = ""
         last_metadata = None
+        
+        # Log to DB/History
+        if call_id: add_message(call_id, "user", text)
+        history.append({"role": "user", "content": text})
+
         async for chunk, is_final, metadata in get_agent_response(
             call_state, last_bot_response, history, text, local_call_data, last_stock,
             system_prompt_override=system_prompt_override, is_generic=is_generic_agent
@@ -169,9 +195,9 @@ async def plivo_stream(websocket: WebSocket):
             call_state = next_state
             last_bot_response = llm_text
             if stock: last_stock.update(stock)
-            history.append({"role": "user", "content": text})
             history.append({"role": "assistant", "content": llm_text})
-            if call_id: add_message(call_id, "user", text); add_message(call_id, "assistant", llm_text)
+            if call_id: add_message(call_id, "assistant", llm_text)
+            
             if terminate_call:
                 await asyncio.sleep(1.5)
                 try: plivo_client.calls.group_hangup(call_uuid)
@@ -181,19 +207,15 @@ async def plivo_stream(websocket: WebSocket):
 
     async def _init_and_greet():
         nonlocal is_initial_greeting
+        log.info("[GREET] Session init started...")
         await stt_connect()
-        # Warmup if needed
+        # Warmup greeting
         g_key = get_tts_cache_key(greeting, voice_id, agent_language)
         if g_key not in TTS_CACHE:
-            log.info("[GREET] Live generating greeting...")
+            log.info("[GREET] Pre-generating greeting...")
             audio = await omnivoice_tts(greeting, voice_id=voice_id, language=agent_language)
             if audio: update_tts_cache(greeting, audio, voice_id=voice_id, language=agent_language)
         
-        # 🚀 WAIT for Plivo Ready
-        if not stream_sid:
-            log.info("[GREET] Waiting for Plivo stream event...")
-            await stream_ready_event.wait()
-            
         is_initial_greeting = True
         await speak(greeting)
         is_initial_greeting = False
@@ -224,24 +246,30 @@ async def plivo_stream(websocket: WebSocket):
                 text = await get_final_transcript(timeout=5)
                 if not text: continue
                 
-                # 🚀 INTERRUPTION LOGIC
                 if is_speaking:
-                    if len(text.split()) >= 2: # Significant speech
-                        log.info(f"[INTERRUPT] User spoke: {text}")
+                    # Allow user to interrupt the greeting specifically
+                    if len(text.split()) >= 2:
+                        log.info(f"[INTERRUPT] User said: {text}")
                         interrupt_event.set()
                         while is_speaking: await asyncio.sleep(0.01)
                     else: continue
                 
-                # Log interaction
                 log.info(f"[USER] {text}")
                 result = await _process_text(text, target_lang=tts_language)
                 if result == "TERMINATE": break
             except Exception: pass
 
-    await asyncio.wait([asyncio.create_task(audio_forwarder()), asyncio.create_task(transcript_loop())], return_when=asyncio.FIRST_COMPLETED)
+    try:
+        await asyncio.wait([asyncio.create_task(audio_forwarder()), asyncio.create_task(transcript_loop())], return_when=asyncio.FIRST_COMPLETED)
+    except: pass
     
     if call_id:
         update_call(call_id, status="completed", ended_at=datetime.utcnow().isoformat()+"Z",
                    duration_sec=int(time.time()-start_connect), metadata=json.dumps({"stock":last_stock}))
+    
     await stt_disconnect()
-    await websocket.close()
+    try:
+        # Check if websocket state is suitable for closing
+        if websocket.client_state != WebSocketDisconnect:
+            await websocket.close()
+    except: pass
