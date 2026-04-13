@@ -92,7 +92,7 @@ def resample_and_to_mulaw(audio_tensor, orig_sr=24000, target_sr=8000):
         resampler = torchaudio.transforms.Resample(
             orig_sr, target_sr, 
             lowpass_filter_width=64, 
-            resampling_method='sinc_interp_hann'
+            resampling_method='sinc_interpolation'
         )
         audio = resampler(audio)
     
@@ -142,28 +142,7 @@ def _resolve_audio_path(path):
     return path
 
 async def omnivoice_tts(text, voice_id=None, language="hindi"):
-    """Generate audio using OmniVoice with persistent disk caching."""
-    cache_key = get_tts_cache_key(text, voice_id, language)
-    
-    # 1. Check Memory Cache
-    if cache_key in TTS_CACHE:
-        return TTS_CACHE[cache_key]
-        
-    # 2. Check Disk Cache (Consistent between sessions)
-    cache_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "voices", ".cache")
-    if not os.path.exists(cache_dir): os.makedirs(cache_dir)
-    
-    import hashlib
-    disk_path = os.path.join(cache_dir, f"{hashlib.md5(cache_key.encode()).hexdigest()}.bin")
-    if os.path.exists(disk_path):
-        try:
-            with open(disk_path, "rb") as f:
-                audio = f.read()
-                TTS_CACHE[cache_key] = audio
-                log.info(f"[TTS] Disk Cache HIT: {text[:30]}...")
-                return audio
-        except: pass
-
+    """Generate audio using OmniVoice."""
     model = await _get_model()
     if not model:
         log.error("[TTS] Model not loaded.")
@@ -242,20 +221,15 @@ async def omnivoice_tts(text, voice_id=None, language="hindi"):
             ref_audio=ref_audio,
             ref_text=ref_text,
             language=language or "hindi",
-            num_inference_steps=25 # Reduced from 35 to 25 for 30% speedup
+            num_inference_steps=35 # Increased for better pronunciation clarity
         ))
         
         if not audio_list or len(audio_list) == 0:
             return None
             
         mulaw = resample_and_to_mulaw(audio_list[0])
-        
-        # Save to both caches
-        TTS_CACHE[cache_key] = mulaw
-        with open(disk_path, "wb") as f: f.write(mulaw)
-        
         ms = int((time.time() - start) * 1000)
-        log.info(f"[TTS] Generated {len(mulaw)} bytes in {ms}ms (steps=25)")
+        log.info(f"[TTS] Generated {len(mulaw)} bytes in {ms}ms")
         return mulaw
     except Exception as e:
         log.error(f"[TTS] Generation error: {e}")
