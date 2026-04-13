@@ -38,26 +38,25 @@ DEFAULT_REF_AUDIO = os.getenv("DEFAULT_REF_AUDIO", os.path.join(os.path.dirname(
 DEFAULT_REF_TEXT = os.getenv("DEFAULT_REF_TEXT", "नमस्ते, मैं आपकी सहायता के लिए तैयार हूँ।")
 
 async def init_tts():
-    """Warms up the model at server startup with a real generation."""
+    """Warms up the model and PRE-CACHES all fillers for the default voice."""
     log.info("[TTS] Warming up OmniVoice model...")
     model = await _get_model()
     if model:
         try:
-            # DUMMY GENERATION: Crucial to compile CUDA kernels and warm up GPU
-            # We use a very short phrase in both languages to be thorough
-            log.info("[TTS] Performing dummy generation for warmup...")
+            log.info("[TTS] Performing warmup and filler pre-caching...")
             ref_audio = _resolve_audio_path(DEFAULT_REF_AUDIO)
-            await asyncio.get_event_loop().run_in_executor(None, lambda: model.generate(
-                text="नमस्ते",
-                ref_audio=ref_audio,
-                ref_text=DEFAULT_REF_TEXT,
-                language="hindi",
-                num_inference_steps=10
-            ))
-            log.info("[TTS] Warm-up generation successful.")
+            
+            # Pre-cache fillers and a common greeting
+            fillers = ["नमस्ते", "जी", "जी बताइए", "जी देख रही हूँ"]
+            for f in fillers:
+                audio = await omnivoice_tts(f, num_inference_steps=12)
+                if audio:
+                    update_tts_cache(f, audio)
+                    
+            log.info(f"[TTS] Warmup successful. {len(fillers)} items cached.")
         except Exception as e:
-            log.error(f"[TTS] Warm-up generation failed: {e}")
-    log.info("[TTS] Warm-up complete.")
+            log.error(f"[TTS] Warmup failed: {e}")
+    log.info("[TTS] Warmup complete.")
 
 async def _get_model():
     """Lazy load the OmniVoice model."""
@@ -83,6 +82,14 @@ async def _get_model():
                 device_map=device,
                 torch_dtype=dtype
             )
+            # 🚀 LATENCY WIN: Compile model for faster inference if supported
+            try:
+                if hasattr(torch, "compile"):
+                    log.info("[TTS] Compiling model for faster inference...")
+                    _model = torch.compile(_model)
+            except Exception as e:
+                log.warning(f"[TTS] Model compilation skipped: {e}")
+                
             log.info(f"[TTS] OmniVoice model loaded successfully on {device}")
             return _model
         except Exception as e:
@@ -157,7 +164,7 @@ def _resolve_audio_path(path):
     
     return path
 
-async def omnivoice_tts(text, voice_id=None, language="hindi", num_inference_steps=20):
+async def omnivoice_tts(text, voice_id=None, language="hindi", num_inference_steps=12):
     """Generate audio using OmniVoice with Cache-Awareness."""
     
     # 🚀 LATENCY WIN: Check cache BEFORE doing anything else
@@ -292,8 +299,8 @@ async def stream_tts_to_plivo(text, tts_ctx, plivo_ws, voice_id=None, language="
     
     # Start all generations concurrently
     async def get_audio(index, sentence):
-        # 🔥 ULTRA LATENCY OPTIMIZATION: Use fewer steps for the FIRST sentence
-        steps = 15 if index == 0 else 20
+        # 🔥 ULTRA LATENCY OPTIMIZATION: Use even fewer steps (10) for the FIRST sentence
+        steps = 10 if index == 0 else 12
         key = get_tts_cache_key(sentence, voice_id, language)
         if key in TTS_CACHE:
             return TTS_CACHE[key]

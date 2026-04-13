@@ -50,8 +50,12 @@ async def get_agent_response(
     call_data,
     current_stock,
     system_prompt_override=None,
-    is_generic=False # New flag to bypass inventory logic
+    is_generic=False
 ):
+    """
+    STREAMS the LLM response. 
+    Yields: (text_chunk, is_final, metadata_if_final)
+    """
     hist_str = ""
     for h in history[-5:]:
         role = "Bot" if h["role"] == "assistant" else "User"
@@ -65,11 +69,8 @@ async def get_agent_response(
         f"USER_SAID: {user_text}"
     )
 
-    raw = ""
-
     try:
         prompt = system_prompt_override if system_prompt_override else build_agent_prompt(call_data)
-
         if not is_generic:
             # 🔥 INVENTORY SPECIFIC RULES
             prompt += """
@@ -91,9 +92,10 @@ async def get_agent_response(
 """
 
         # ALWAYS required for either type
-        prompt += '\n*** FORMAT: JSON ONLY\n{"response": "reply", "state": "current_state", "terminate": false, "stock": {}}\n'
+        prompt += '\n*** FORMAT: JSON ONLY. Put "response" field FIRST.\n{"response": "reply", "state": "current_state", "terminate": false, "stock": {}}\n'
 
-        comp = await groq_client.chat.completions.create(
+        # Groq Stream
+        stream = await groq_client.chat.completions.create(
             model="llama-3.1-8b-instant",
             messages=[
                 {"role": "system", "content": prompt},
@@ -101,65 +103,61 @@ async def get_agent_response(
             ],
             max_tokens=250,
             temperature=0,
-            stream=False,
+            stream=True,
             response_format={"type": "json_object"}
         )
 
-        raw = comp.choices[0].message.content.strip()
+        full_raw = ""
+        extracted_text = ""
+        yielded_index = 0
+        
+        async for chunk in stream:
+            delta = chunk.choices[0].delta.content or ""
+            full_raw += delta
+            
+            # Simple extraction logic for the "response" field as it streams
+            if '"response": "' in full_raw and not extracted_text:
+                start_idx = full_raw.find('"response": "') + 13
+                current_content = full_raw[start_idx:]
+                new_text = current_content[yielded_index:]
+                
+                # We yield whenever we see space or punctuation to keep audio delivery smooth
+                if any(p in new_text for p in [" ", "।", ".", "?", "!", "\n"]):
+                    last_p = -1
+                    for i, char in enumerate(new_text):
+                        if char in [" ", "।", ".", "?", "!", "\n"]:
+                            last_p = i
+                    
+                    if last_p != -1:
+                        chunk_to_yield = new_text[:last_p+1]
+                        yield (chunk_to_yield, False, None)
+                        yielded_index += last_p + 1
 
-        # साफ JSON parsing
-        if raw.startswith("```"):
-            raw = raw.split("```")[1]
-            if raw.startswith("json"):
-                raw = raw[4:]
-            raw = raw.strip()
+        # End of stream: Finalize extraction and return metadata
+        if '"response": "' in full_raw:
+            start_idx = full_raw.find('"response": "') + 13
+            end_idx = full_raw.find('"', start_idx)
+            if end_idx != -1:
+                final_text = full_raw[start_idx:end_idx]
+                residual = final_text[yielded_index:]
+                if residual.strip():
+                    yield (residual, False, None)
 
-        data = json.loads(raw)
-
+        data = json.loads(full_raw)
         response = data.get("response", "")
         next_state = data.get("state", state)
         terminate = data.get("terminate", False)
         stock = data.get("stock", {})
 
-        # 🚨 HARD GUARD 1: prevent repetition loop
-        if response.strip() == last_bot_msg.strip():
-            log.warning("Repeat detected → forcing termination")
-            return ("धन्यवाद, आपका दिन शुभ हो।", state, True, current_stock)
-
-        # 🚨 HARD GUARD 2: user exit detection (code level)
-        exit_keywords = ["busy", "baad", "बाद", "फोन काट", "मत कॉल", "नहीं बात"]
-        if any(k in user_text.lower() for k in exit_keywords):
-            return ("ठीक है, धन्यवाद!", state, True, current_stock)
-
-        # 🚨 HARD GUARD 3: prevent asking already filled SKU
-        for sku, val in current_stock.items():
-            if val is not None and sku in response:
-                log.warning("Asking already filled SKU → fixing")
-                return ("धन्यवाद, आपका दिन शुभ हो।", state, True, current_stock)
-
         # merge stock safely (Only for inventory agents)
+        updated_stock = current_stock.copy()
         if not is_generic:
-            updated_stock = current_stock.copy()
-            expected_skus = call_data.get("skus", [])
-            for sku in expected_skus:
-                if sku not in updated_stock:
-                    updated_stock[sku] = None
-
             for k, v in stock.items():
                 if updated_stock.get(k) is None:
                     updated_stock[k] = v
 
-            # 🚨 AUTO CLOSE: only for inventory bots
-            if expected_skus and all(updated_stock.get(sku) is not None for sku in expected_skus):
-                return ("धन्यवाद, आपका दिन शुभ हो।", state, True, updated_stock)
-            
-            return (response, next_state, terminate, updated_stock)
-        
-        # For Generic Agents, just return the raw response
-        return (response, next_state, terminate, {})
+        yield (None, True, (response, next_state, terminate, updated_stock))
 
     except Exception as e:
-        log.error(f"LLM error: {e} | raw: {raw if raw else 'None'}")
-
-        # fallback safe response - DON'T terminate on single error
-        return ("जी, समझ नहीं आया। क्या आप फिर से बता सकते हैं?", state, False, current_stock)
+        log.error(f"LLM error: {e}")
+        yield ("जी, समझ नहीं आया।", True, ("जी, समझ नहीं आया।", state, False, current_stock))

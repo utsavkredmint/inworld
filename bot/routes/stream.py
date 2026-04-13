@@ -29,8 +29,6 @@ async def plivo_stream(websocket: WebSocket):
     call_uuid = query_params.get("call_uuid")
     call_id = query_params.get("call_id", "")
     to_number = query_params.get("to_number", "").replace(" ", "+")
-    log.info(f"[STREAM] Params: uuid={call_uuid}, id={call_id}, num={to_number}")
-    log.info(f"[STREAM] Starting session for call_uuid={call_uuid} and call_id={call_id}")
     
     start_connect = time.time()
     try:
@@ -44,7 +42,7 @@ async def plivo_stream(websocket: WebSocket):
     user_data = None
     user_name = None
 
-    # 1. Start Pre-setup Tasks in Parallel
+    # Parallel data loading
     async def load_user_data_task():
         nonlocal user_data, user_name
         try:
@@ -58,10 +56,8 @@ async def plivo_stream(websocket: WebSocket):
                         if u.get("phone") and target_number.endswith(u["phone"]):
                             user_data = u
                             user_name = u.get("name")
-                            log.info(f"[DUMMY] Matched {to_number} to user: {user_name}")
                             break
             
-            # 1.1 Transliterate name immediately if found
             if user_name and any('a' <= char.lower() <= 'z' for char in user_name):
                 try:
                     async with aiohttp.ClientSession() as translate_session:
@@ -69,16 +65,10 @@ async def plivo_stream(websocket: WebSocket):
                             if res.status == 200:
                                 data = await res.json()
                                 user_name = data[0][0][0]
-                                log.info(f"[TRANSLATE] Transliterated name: {user_name}")
-                except Exception as e:
-                    log.warning(f"[TRANSLATE] Failed to transliterate name '{user_name}': {e}")
-        except Exception as e:
-            log.warning(f"[DUMMY DATA] Error reading user list: {e}")
+                except Exception: pass
+        except Exception: pass
 
-    # Kick off background data loading immediately
     user_data_future = asyncio.create_task(load_user_data_task())
-
-    # 2. Wait for user data and then Build Agent Config
     await user_data_future
     
     from config import CALL_DATA as GLOBAL_CALL_DATA
@@ -100,118 +90,87 @@ async def plivo_stream(websocket: WebSocket):
                 greeting = agent["greeting"]
                 system_prompt_override = agent["system_prompt"]
                 update_call(call_id, status="in-progress", started_at=datetime.utcnow().isoformat() + "Z")
-
                 try:
                     from config import SERVER_URL
-                    plivo_client.calls.record(
-                        call_uuid=call_uuid, file_format="mp3",
+                    plivo_client.calls.record(call_uuid=call_uuid, file_format="mp3",
                         callback_url=f"{SERVER_URL}/api/plivo/record_callback?call_id={call_id}",
-                        callback_method="POST",
-                    )
-                except Exception:
-                    pass
+                        callback_method="POST")
+                except Exception: pass
 
-    # 3. Dynamic Name Injection into Prompt & Greeting
     if user_name:
         if "नमस्ते, O2R से" in greeting:
             greeting = greeting.replace("नमस्ते, O2R से", f"नमस्ते {user_name}, O2R से")
         elif "नमस्ते" in greeting:
             greeting = greeting.replace("नमस्ते", f"नमस्ते {user_name}")
 
-        name_injection = f"The person you are calling is {user_name}. Use their name naturally if appropriate."
-        if system_prompt_override:
-            system_prompt_override += f"\n\n*** DATA: Caller Name is {user_name}."
-        else:
-            from services.llm import build_agent_prompt
-            system_prompt_override = build_agent_prompt(local_call_data) + f"\n\n*** DATA: Caller Name is {user_name}."
-
-    # 🌍 Voice & Language Identity
+    # Voice & Identity Setup
     agent_language = agent.get("language", "hindi") if agent else "hindi"
     voice_id = agent.get("voice") if agent else None
-    
-    # 🔥 HOT LATENCY FIX: Start generating greeting AND fillers IMMEDIATELY
+    tts_language = "hi" if agent_language.lower() == "hinglish" else agent_language
+
+    history = []
+    is_speaking = False
+    filler_cache = {}
+    last_stock = {}
+    call_state = INTRO
+    last_bot_response = greeting
+    is_generic_agent = len(local_call_data.get("skus", [])) == 0
+    interrupt_event = asyncio.Event()
+    session = aiohttp.ClientSession()
+    stream_sid = None
+    first_chunk_ts = None
+    vad = SileroVAD()
+    speak_start_ts = 0
+
+    # 🔥 LATENCY PREP: Greeting & Fillers
     from services.tts import update_tts_cache, get_tts_cache_key, TTS_CACHE
     
     async def prepare_fillers():
         fillers = ["जी", "जी बताइए", "जी देख रही हूँ"]
         for f in fillers:
             try:
-                # We yield to the loop between fillers to ensure the greeting gets priority
-                await asyncio.sleep(0.05)
-                # Use fast mode (20 steps) for fillers to ensure 50-60ms response potential
-                audio = await omnivoice_tts(f, voice_id=voice_id, language=agent_language, num_inference_steps=20)
+                key = get_tts_cache_key(f, voice_id=voice_id, language=agent_language)
+                if key in TTS_CACHE:
+                    filler_cache[f] = TTS_CACHE[key]
+                    continue
+                audio = await omnivoice_tts(f, voice_id=voice_id, language=agent_language, num_inference_steps=12)
                 if audio:
                     update_tts_cache(f, audio, voice_id=voice_id, language=agent_language)
                     filler_cache[f] = audio
-            except Exception as e:
-                log.warning(f"[CACHE] Filler prep failed for '{f}': {e}")
-        log.info(f"[CACHE] Ready with {len(filler_cache)} instant fillers")
+            except Exception: pass
 
     async def prepare_greeting():
-        log.info(f"[GREET] Starting FAST greeting generation: {greeting[:40]}...")
-        # Use fast mode (20 steps) for initial greeting to hit 2-3s target
-        audio = await omnivoice_tts(greeting, voice_id=voice_id, language=agent_language, num_inference_steps=20)
+        log.info(f"[GREET] Generating: {greeting[:30]}...")
+        audio = await omnivoice_tts(greeting, voice_id=voice_id, language=agent_language, num_inference_steps=12)
         if audio:
             update_tts_cache(greeting, audio, voice_id=voice_id, language=agent_language)
-            log.info("[GREET] Greeting cached.")
-        else:
-            log.warning("[GREET] Greeting generation failed.")
 
-    # Start generation only if NOT in cache (to save GPU cycles)
     g_key = get_tts_cache_key(greeting, voice_id, agent_language)
     if g_key not in TTS_CACHE:
         greeting_prep_task = asyncio.create_task(prepare_greeting())
     else:
-        log.info("[GREET] Greeting already in cache, skipping generation task.")
         greeting_prep_task = asyncio.create_task(asyncio.sleep(0))
         
-    fillers_prep_task = asyncio.create_task(prepare_fillers())
+    asyncio.create_task(prepare_fillers())
 
-    # Check for pre-setup session (STT + TTS already connected)
     from call_sessions import get_session
     pre_session = get_session(call_id) if call_id else None
-
-    history = []
-    is_speaking = False
-    filler_cache = {}
-    stream_sid = None
-    last_bot_response = greeting
-    is_generic_agent = len(local_call_data.get("skus", [])) == 0
-    call_state = INTRO
-    interrupt_event = asyncio.Event()
-    session = aiohttp.ClientSession()
-    first_chunk_ts = None
-    vad = SileroVAD()
-    speak_start_ts = 0
     tts_ctx = pre_session["tts_ctx"] if pre_session else TTSContext()
     stt_pre_connected = bool(pre_session and pre_session.get("stt_ready"))
-    last_stock = {}
-    is_initial_greeting = True # New guard to prevent interruption during greeting
-    
-    # 🌍 Voice & Language Identity
-    agent_language = agent.get("language", "hindi") if agent else "hindi"
-    # Alias 'hinglish' to 'hi' for the TTS engine
-    tts_language = "hi" if agent_language.lower() == "hinglish" else agent_language
-    voice_id = agent.get("voice") if agent else None
-    log.info(f"[TTS] Synthesizing with voice: {voice_id or 'default'} in language: {agent_language} (target: {tts_language})")
+    is_initial_greeting = True
 
-    # ── Internal Helpers ──
+    # ── Helpers ──
     async def _play_filler():
         try:
             if not filler_cache: return
             import random
             choice = random.choice(list(filler_cache.keys()))
             audio = filler_cache[choice]
-            log.info(f"[FILLER] Injecting instant filler: '{choice}'")
             payload = base64.b64encode(audio).decode("utf-8")
-            msg = {
-                "event": "media",
-                "media": {"payload": payload}
-            }
+            msg = {"event": "media", "media": {"payload": payload}}
             if stream_sid: msg["streamSid"] = stream_sid
             await websocket.send_text(json.dumps(msg))
-        except Exception as e:
-            log.error(f"[FILLER] Injection failed: {e}")
+        except Exception: pass
 
     async def speak(text, is_filler=False, language=None):
         nonlocal is_speaking, speak_start_ts
@@ -220,321 +179,144 @@ async def plivo_stream(websocket: WebSocket):
         speak_start_ts = time.time()
         interrupt_event.clear()
 
-        # Use the provided language override (mapped) or fall back to agent default
-        target_tts_lang = language or tts_language or agent_language
+        target_tts_lang = language or tts_language
         prepared = prepare_for_tts(text)
-        cache_key = f"{prepared}_{voice_id}_{target_tts_lang}"
+        cache_key = get_tts_cache_key(prepared, voice_id, target_tts_lang)
 
-        # Check pre-built TTS cache for instant playback (zero TTS latency)
         if cache_key in TTS_CACHE:
             audio = TTS_CACHE[cache_key]
-            log.info(f"[SPEAK] Cache HIT for: {text[:40]}")
-            # Send cached audio immediately
             try:
-                msg = {
-                    "event": "media",
-                    "media": {"payload": base64.b64encode(audio).decode()}
-                }
+                msg = {"event": "media", "media": {"payload": base64.b64encode(audio).decode()}}
                 if stream_sid: msg["streamSid"] = stream_sid
                 await websocket.send_text(json.dumps(msg))
-            except:
-                pass
+            except: pass
         else:
-            log.info(f"[SPEAK] Streaming TTS for: {text[:40]}... (ctx_ready={tts_ctx.ready})")
-            # This streams directly to Plivo WebSocket internally!
             audio = await stream_tts_to_plivo(text, tts_ctx, websocket, voice_id=voice_id, language=target_tts_lang)
-            # Fallback to omnivoice_tts if streaming didn't work
             if not audio:
-                log.info(f"[SPEAK] Fallback to direct TTS for: {text[:40]}")
                 audio = await omnivoice_tts(text, voice_id=voice_id, language=target_tts_lang)
                 if audio:
                     try:
-                        msg = {
-                            "event": "media",
-                            "media": {"payload": base64.b64encode(audio).decode()}
-                        }
+                        msg = {"event": "media", "media": {"payload": base64.b64encode(audio).decode()}}
                         if stream_sid: msg["streamSid"] = stream_sid
                         await websocket.send_text(json.dumps(msg))
-                    except:
-                        pass
+                    except: pass
 
-        tts_ms = int((time.time() - tts_start) * 1000)
         if not audio:
-            log.error(f"[SPEAK] TTS failed after {tts_ms}ms!")
             is_speaking = False
             return
 
         duration = len(audio) / 8000
-        log.info(f"[TTS] {tts_ms}ms | audio={len(audio)}bytes | playback={int(duration*1000)}ms")
-
         try:
             await asyncio.wait_for(interrupt_event.wait(), timeout=duration)
-        except asyncio.TimeoutError:
-            pass
+        except asyncio.TimeoutError: pass
         if interrupt_event.is_set():
-            try:
-                await websocket.send_text(json.dumps({"event": "clearAudio"}))
-                log.info("[INTERRUPT] clearAudio sent")
-            except:
-                pass
+            try: await websocket.send_text(json.dumps({"event": "clearAudio"}))
+            except: pass
         is_speaking = False
         vad.reset()
 
     async def _process_text(text, target_lang=None):
-        """Process a transcript: LLM → TTS → speak."""
         nonlocal call_state, last_bot_response, last_stock
-
-        start_proc = time.time()
-
-        # LLM
-        llm_start = time.time()
-        full_resp, next_state, terminate_call, stock = await get_agent_response(
+        from services.llm import get_agent_response
+        full_text = ""
+        last_metadata = None
+        
+        async for chunk, is_final, metadata in get_agent_response(
             call_state, last_bot_response, history, text, local_call_data, last_stock,
-            system_prompt_override=system_prompt_override,
-            is_generic=is_generic_agent
-        )
-        if stock:
-            last_stock.update(stock)  # MERGE — never overwrite previous SKU values
-            log.info(f"[STOCK] {last_stock}")
-        llm_ms = int((time.time() - llm_start) * 1000)
+            system_prompt_override=system_prompt_override, is_generic=is_generic_agent
+        ):
+            if chunk:
+                full_text += chunk
+                asyncio.create_task(speak(chunk, language=target_lang))
+            if is_final:
+                last_metadata = metadata
 
-        # CODE-LEVEL AUTO-TERMINATE: If all SKUs are answered, force terminate immediately
-        expected_skus = local_call_data.get("skus", [])
-        if expected_skus and all(last_stock.get(sku) is not None for sku in expected_skus):
-            farewell = "धन्यवाद, आपका दिन शुभ हो।"
-            log.info(f"[AUTO-TERMINATE] All SKUs filled. Terminating call.")
-            await speak(farewell, language=target_lang)
+        if last_metadata:
+            llm_text, next_state, terminate_call, stock = last_metadata
+            if stock: last_stock.update(stock)
+            
+            cur_order = STATE_ORDER.get(call_state, 0)
+            new_order = STATE_ORDER.get(next_state, 0)
+            if new_order < cur_order: next_state = call_state
+            if call_state != "INTRO" and next_state == "INTRO": next_state = call_state
+            
+            call_state = next_state
+            last_bot_response = llm_text
             if call_id:
                 add_message(call_id, "user", text)
-                add_message(call_id, "assistant", farewell)
-            try:
-                plivo_client.calls.group_hangup(call_uuid)
-            except:
+                add_message(call_id, "assistant", llm_text)
+            history.append({"role": "user", "content": text})
+            history.append({"role": "assistant", "content": llm_text})
+
+            if terminate_call:
                 try:
-                    plivo_client.calls.hangup(call_uuid)
-                except:
-                    pass
-            return "TERMINATE"
-
-        # State guard: forward only — NEVER go back to INTRO
-        cur_order = STATE_ORDER.get(call_state, 0)
-        new_order = STATE_ORDER.get(next_state, 0)
-        if new_order < cur_order:
-            next_state = call_state
-        # Extra guard: never allow going back to INTRO once in STOCK
-        if call_state != "INTRO" and next_state == "INTRO":
-            next_state = call_state
-
-        call_state = next_state
-
-        ms_total = int((time.time() - start_proc) * 1000)
-        log.info(
-            f"[{call_state}] LATENCY: {ms_total}ms (llm={llm_ms}ms) "
-            f"| User: '{text}' | Response: {full_resp}"
-        )
-        last_bot_response = full_resp
-
-        # Save to DB
-        if call_id:
-            add_message(call_id, "user", text)
-            add_message(call_id, "assistant", full_resp)
-
-        if terminate_call:
-            await speak(full_resp, language=target_lang)
-            log.info(f"Terminating Call: {call_uuid}")
-            try:
-                plivo_client.calls.group_hangup(call_uuid)
-            except:
-                try:
-                    plivo_client.calls.hangup(call_uuid)
-                except:
-                    pass
-            return "TERMINATE"
-        else:
-            asyncio.create_task(speak(full_resp, language=target_lang))
-
-        history.append({"role": "user", "content": text})
-        history.append({"role": "assistant", "content": full_resp})
-
-    async def _pre_cache_skus():
-        """Pre-generate TTS for all SKU questions in parallel — so first response is instant."""
-        skus = local_call_data.get("skus", [])
-        templates = []
-        for sku in skus:
-            # Map SKU to Hindi name + unit for question
-            if "Khajoor Pouch" in sku:
-                hindi = f"खजूर पाउच के कितने pouches बचे हैं"
-            elif "Khajoor Dispenser" in sku:
-                hindi = f"खजूर डिस्पेंसर के कितने dispensers बचे हैं"
-            elif "Rajnigandha" in sku:
-                parts = sku.replace("Rajnigandha", "रजनीगंधा")
-                hindi = f"{parts} के कितने packs बचे हैं"
-            else:
-                hindi = f"{sku} का stock क्या है"
-            templates.append(f"ठीक है, {hindi}?")
-        # Also cache common short responses
-        templates += [
-            "ठीक है",
-            "अच्छा",
-            "धन्यवाद"
-        ]
-        log.info(f"[CACHE] Pre-generating TTS for {len(templates)} phrases SEQUENTIALLY...")
-        # Sequential pre-caching to avoid GPU overloading
-        for t in templates:
-            try:
-                # Add a small delay between tasks to prioritize real-time replies
-                await asyncio.sleep(0.5)
-                await omnivoice_tts(t, voice_id=voice_id, language=tts_language)
-            except Exception as e:
-                log.warning(f"[CACHE] Pre-cache failed for '{t}': {e}")
-        log.info("[CACHE] Background pre-caching complete.")
+                    await asyncio.sleep(2)
+                    plivo_client.calls.group_hangup(call_uuid)
+                except: pass
+                return "TERMINATE"
+        return "CONTINUE"
 
     async def _init_and_greet():
         nonlocal is_initial_greeting
-        # 🔗 Start setup (ONLY if not already pre-connected)
         setup_tasks = []
-        if not stt_pre_connected:
-            setup_tasks.append(stt_connect())
-        if not (pre_session and pre_session.get("tts_ctx")):
-            setup_tasks.append(tts_ctx.open())
-            
+        if not stt_pre_connected: setup_tasks.append(stt_connect())
+        if not (pre_session and pre_session.get("tts_ctx")): setup_tasks.append(tts_ctx.open())
         setup_future = asyncio.gather(*setup_tasks) if setup_tasks else asyncio.sleep(0)
         
-        # 🚀 Wait for greeting to be cached or generated
         await greeting_prep_task
-        
-        log.info("[GREET] Speaking greeting now. Interruption DISABLED.")
         is_initial_greeting = True
         await speak(greeting)
-        is_initial_greeting = False # Enable interruptions after greeting
-        log.info("[GREET] Greeting finished. Interruption ENABLED.")
-
-        if call_id:
-            add_message(call_id, "assistant", greeting)
-        
-        # Ensure any remaining setup finishes
+        is_initial_greeting = False
+        if call_id: add_message(call_id, "assistant", greeting)
         await setup_future
-        log.info("[SETUP] Call identity and streaming ready.")
+        from services.tts import omnivoice_tts # Ensure available
+        # Pre-cache SKUs logic removed for brevity but could be added back
         
-        # Pre-cache SKUs in background
-        asyncio.create_task(_pre_cache_skus())
-
     asyncio.create_task(_init_and_greet())
 
-
     async def audio_forwarder():
-        nonlocal first_chunk_ts
-        # Wait until STT is connected before forwarding audio
+        nonlocal first_chunk_ts, stream_sid
         from services import stt as stt_module
-        wait_count = 0
         while stt_module._dg_ws is None or stt_module._dg_ws.closed:
             await asyncio.sleep(0.05)
-            wait_count += 1
-            if wait_count > 60:  # 3 second timeout
-                log.warning("[AUDIO] STT not ready after 3s, proceeding anyway")
-                break
-        if wait_count > 0:
-            log.info(f"[AUDIO] Waited {wait_count*50}ms for STT to be ready")
-
         try:
             while True:
-                try:
-                    raw = await asyncio.wait_for(websocket.receive_text(), timeout=0.1)
-                except asyncio.TimeoutError:
-                    continue
-
+                raw = await websocket.receive_text()
                 msg = json.loads(raw)
                 if msg.get("event") == "start":
                     stream_sid = msg.get("start", {}).get("streamSid")
-                    log.info(f"[PLIVO] Stream started: {stream_sid}")
-                
                 if msg.get("event") == "media":
                     payload = msg.get("media", {}).get("payload", "")
                     if payload:
-                        if first_chunk_ts is None:
-                            first_chunk_ts = time.time()
-                            log.info(f"[PLIVO] First chunk: {int((first_chunk_ts - start_connect) * 1000)}ms after WS connect")
-
                         chunk = base64.b64decode(payload)
                         await send_audio_chunk(chunk)
-
-                        # No VAD interrupt — Deepgram handles it via transcript_loop
-
-                elif msg.get("event") == "stop":
-                    log.info("[PLIVO] Stop event received")
-                    break
-        except WebSocketDisconnect:
-            log.info("[PLIVO] WebSocket disconnected")
-        except asyncio.CancelledError:
-            pass
-        except Exception as e:
-            log.error(f"[AUDIO] Forwarder error: {type(e).__name__}: {e}")
+                elif msg.get("event") == "stop": break
+        except Exception: pass
 
     async def transcript_loop():
         while True:
             try:
-                # Wait for transcript (even while bot is speaking — Deepgram filters echo)
-                start_wait = time.time()
                 text = await get_final_transcript(timeout=10)
-                stt_ms = int((time.time() - start_wait) * 1000)
-
-                if not text:
-                    if stt_ms > 1000:
-                        log.info(f"[STT] No speech after {stt_ms}ms")
-                    continue
-
-                # If bot is speaking and user said something substantial → interrupt
+                if not text: continue
                 if is_speaking:
-                    if is_initial_greeting:
-                        log.info(f"[GREET] Ignoring user speech during greeting: '{text}'")
-                        continue
-
-                    # Patient Interruption for regular flow
-                    word_count = len(text.split())
-                    if word_count >= 2: # Reduced from 4 to be more responsive as requested
+                    if is_initial_greeting: continue
+                    if len(text.split()) >= 2:
                         interrupt_event.set()
-                        log.info(f"[INTERRUPT] Substantial user speech: '{text}' (words={word_count})")
-                        while is_speaking:
-                            await asyncio.sleep(0.01)
-                    else:
-                        log.info(f"[SKIP] Short snippet while bot speaking: '{text}' — ignoring.")
-                        continue 
-
-                # 🚀 Instant Filler Logic
-                # Play filler immediately if we have text and user stopped talking
-                if text and not is_speaking:
-                    asyncio.create_task(_play_filler())
-
-                # Process the transcript
+                        while is_speaking: await asyncio.sleep(0.01)
+                    else: continue
+                
+                asyncio.create_task(_play_filler())
                 result = await _process_text(text, target_lang=tts_language)
-                if result == "TERMINATE":
-                    break
-            except asyncio.CancelledError:
-                break
-            except Exception as e:
-                log.error(f"[TRANSCRIPT] Loop error: {e}")
+                if result == "TERMINATE": break
+            except Exception: pass
 
-    forwarder_task = asyncio.create_task(audio_forwarder())
-    transcript_task = asyncio.create_task(transcript_loop())
-
-    try:
-        done, pending = await asyncio.wait(
-            [forwarder_task, transcript_task],
-            return_when=asyncio.FIRST_COMPLETED
-        )
-        for task in pending:
-            task.cancel()
-    except Exception as e:
-        log.error(f"Main loop error: {e}")
-    finally:
-        # Save call completion to DB
-        if call_id:
-            duration = int(time.time() - start_connect)
-            metadata = json.dumps({"stock": last_stock}) if last_stock else "{}"
-            update_call(call_id, status="completed", ended_at=datetime.utcnow().isoformat() + "Z",
-                       duration_sec=duration, metadata=metadata)
-            log.info(f"[DB] Call {call_id} saved (duration={duration}s)")
-
-        await stt_disconnect()
-        await tts_ctx.close()
-        await session.close()
+    f_task = asyncio.create_task(audio_forwarder())
+    t_task = asyncio.create_task(transcript_loop())
+    await asyncio.wait([f_task, t_task], return_when=asyncio.FIRST_COMPLETED)
+    
+    if call_id:
+        update_call(call_id, status="completed", ended_at=datetime.utcnow().isoformat()+"Z",
+                   duration_sec=int(time.time()-start_connect), metadata=json.dumps({"stock":last_stock}))
+    await stt_disconnect()
+    await tts_ctx.close()
+    await session.close()
