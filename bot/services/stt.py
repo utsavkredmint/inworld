@@ -116,18 +116,29 @@ async def send_audio_chunk(chunk):
             pass
 
 
-async def get_final_transcript(timeout=8.0):
+async def get_final_transcript(timeout=0.6):
     """Wait for complete utterance transcript from Deepgram."""
     if not _transcript_queue:
         return ""
 
     collected = []
     deadline = asyncio.get_event_loop().time() + timeout
+    
+    # SILENCE TIMEOUT: If we have text but no speech_final, 
+    # wait only 400ms more for extra words before giving up.
+    silence_timeout = 0.4 
 
     while True:
-        remaining = deadline - asyncio.get_event_loop().time()
+        now = asyncio.get_event_loop().time()
+        remaining = deadline - now
+        
+        if collected:
+            # If we already have some text, don't wait the full 'deadline'
+            remaining = min(remaining, silence_timeout)
+
         if remaining <= 0:
             break
+            
         try:
             msg_type, text, speech_final = await asyncio.wait_for(
                 _transcript_queue.get(), timeout=remaining
