@@ -201,35 +201,28 @@ async def omnivoice_tts(text, voice_id=None, language="hindi", steps=35):
     }
     import re
     for eng, hin in replacements.items():
-        # Use regex to match whole words only, handling punctuation and boundaries
-        text = re.sub(rf'\b{eng}\b', hin, text, flags=re.IGNORECASE)
+        text = re.sub(rf"\b{eng}\b", hin, text, flags=re.IGNORECASE)
 
-    # SAFETY CHECK: Prevent 'zero element' tensor error if text is empty or too short
     clean_text = text.strip()
-    if not clean_text or len(clean_text) < 1:
-        log.warning("[TTS] Avoiding generation for empty/short text to prevent model crash.")
+    if not clean_text:
         return None
 
-    log.info(f"[TTS] Synthesizing with voice: {voice_id or 'default'} in language: {language}")
+    log.info(f"[TTS] Generating with voice: {voice_id or 'default'} in {language} (steps={steps})")
     
     start = time.time()
     try:
-        # OmniVoice generate is usually blocking, we run in executor
         loop = asyncio.get_event_loop()
         audio_list = await loop.run_in_executor(None, lambda: model.generate(
             text=text,
             ref_audio=ref_audio,
             ref_text=ref_text,
             language=language or "hindi",
-            num_inference_steps=steps # Dynamic steps for latency control
+            num_inference_steps=steps
         ))
         
-        if not audio_list or len(audio_list) == 0:
-            return None
-            
+        if not audio_list: return None
         mulaw = resample_and_to_mulaw(audio_list[0])
-        ms = int((time.time() - start) * 1000)
-        log.info(f"[TTS] Generated {len(mulaw)} bytes in {ms}ms")
+        log.info(f"[TTS] Generated in {int((time.time() - start)*1000)}ms")
         return mulaw
     except Exception as e:
         log.error(f"[TTS] Generation error: {e}")

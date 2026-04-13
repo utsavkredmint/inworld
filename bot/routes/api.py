@@ -216,10 +216,14 @@ async def trigger_outbound_call(agent_id, phone_number):
 @router.post("/calls")
 async def api_trigger_call(req: TriggerCallRequest):
     try:
+        log.info(f"[API] Triggering call to {req.phone_number} for agent {req.agent_id}")
         call = await trigger_outbound_call(req.agent_id, req.phone_number)
         return call
     except Exception as e:
-        return JSONResponse(status_code=500, content={"error": str(e)})
+        import traceback
+        log.error(f"API Error in trigger_outbound_call: {e}")
+        log.error(traceback.format_exc())
+        return JSONResponse(status_code=500, content={"error": f"Internal Server Error: {str(e)}"})
 
 
 @router.get("/calls")
