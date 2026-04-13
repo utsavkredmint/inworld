@@ -129,22 +129,23 @@ async def plivo_stream(websocket: WebSocket):
             audio = TTS_CACHE[cache_key]
             log.info(f"[SPEAK] Cache HIT: {text[:40]} | Bytes: {len(audio)}")
             # 🚀 CHUNKING: Send cached audio in small parts to prevent Plivo overflow
-            chunk_size = 640 # 80ms
+            chunk_size = 320 # 40ms
             try:
                 for i in range(0, len(audio), chunk_size):
                     if interrupt_event.is_set(): break
                     chunk = audio[i:i+chunk_size]
                     msg = {
-                        "event": "media",
+                        "event": "playAudio",
                         "media": {
-                            "payload": base64.b64encode(chunk).decode()
+                            "payload": base64.b64encode(chunk).decode(),
+                            "contentType": "audio/x-mulaw",
+                            "sampleRate": 8000
                         },
-                        "streamSid": stream_sid,
-                        "streamId": stream_sid
+                        "streamSid": stream_sid
                     }
                     await websocket.send_text(json.dumps(msg))
-                    # Buffer management: sleep 0.02s to match real-time better
-                    await asyncio.sleep(0.02)
+                    # Buffer management: sleep 0.04s to match real-time better
+                    await asyncio.sleep(0.04)
             except Exception as e:
                 log.error(f"[STREAM] WS Send Error: {e}")
         else:
