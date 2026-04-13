@@ -75,11 +75,11 @@ async def get_agent_response(
                 
                 new_text = text_so_far[yielded_index:]
                 
-                # 🚀 CONTINUITY WIN: Yield FIRST chunk (6 words) to ensure playback is long enough to hide NEXT chunk synthesis
+                # 🚀 CONTINUITY WIN: Yield FIRST chunk (10 words) to ensure playback is long enough to hide NEXT chunk synthesis
                 words = new_text.strip().split()
-                if yielded_index == 0 and len(words) >= 6:
-                     # If we have 6 words, yield them to start synthesis
-                     chunk_to_yield = " ".join(words[:6])
+                if yielded_index == 0 and len(words) >= 10:
+                     # If we have 10 words, yield them to start synthesis
+                     chunk_to_yield = " ".join(words[:10])
                      if any('\u0900'<=c<='\u097f' or 'a'<=c.lower()<='z' for c in chunk_to_yield):
                          yield (chunk_to_yield + " ", False, None)
                      yielded_index += len(chunk_to_yield) + 1
