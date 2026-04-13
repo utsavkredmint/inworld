@@ -274,7 +274,7 @@ class TTSContext:
     async def open(self): return True
     async def close(self): pass
 
-async def stream_tts_to_plivo(text, tts_ctx, plivo_ws, voice_id=None, language="hindi"):
+async def stream_tts_to_plivo(text, tts_ctx, plivo_ws, voice_id=None, language="hindi", stream_sid=None):
     """
     Real Streaming: splits text into sentences and plays each as soon as its audio is ready.
     Generates all chunks concurrently to minimize playback gaps.
@@ -297,7 +297,7 @@ async def stream_tts_to_plivo(text, tts_ctx, plivo_ws, voice_id=None, language="
     if not final_chunks:
         return None
 
-    log.info(f"[STREAM] Parallel processing {len(final_chunks)} chunks.")
+    log.info(f"[STREAM] Parallel processing {len(final_chunks)} chunks for SID: {stream_sid}")
     
     # Start all generations concurrently
     async def get_audio(index, sentence):
@@ -319,23 +319,23 @@ async def stream_tts_to_plivo(text, tts_ctx, plivo_ws, voice_id=None, language="
         if not mulaw: continue
         total_mulaw += mulaw
 
-        # Send in small chunks to Plivo
-        chunk_size = 320 # 20ms
+        # Send in chunks to Plivo via the "media" event
+        chunk_size = 640 # 40ms to reduce overhead
         for j in range(0, len(mulaw), chunk_size):
             chunk = mulaw[j:j+chunk_size]
             try:
-                await plivo_ws.send_text(json.dumps({
-                    "event": "playAudio",
+                msg = {
+                    "event": "media",
                     "media": {
-                        "contentType": "audio/x-mulaw",
-                        "sampleRate": "8000",
                         "payload": base64.b64encode(chunk).decode()
                     }
-                }))
+                }
+                if stream_sid: msg["streamSid"] = stream_sid
+                await plivo_ws.send_text(json.dumps(msg))
             except:
                 break
-            # Very small sleep to prevent Plivo overflow
-            await asyncio.sleep(0.002) 
+            # Buffer management
+            await asyncio.sleep(0.01) 
 
     return total_mulaw
 
