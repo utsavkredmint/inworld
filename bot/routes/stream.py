@@ -40,45 +40,53 @@ async def plivo_stream(websocket: WebSocket):
         log.error(f"[STREAM] Failed to accept WebSocket: {e}")
         return
 
-    log.info(f"Socket Active for {call_uuid} (call_id={call_id})")
-
-    # 1. Load User Data First (to get per-caller SKUs and Time)
+    # Initialize scope variables
     user_data = None
     user_name = None
-    try:
-        from pathlib import Path
-        dummy_path = Path(__file__).parent.parent / "dummy_data.json"
-        with open(dummy_path, "r", encoding="utf-8") as f:
-            users_list = json.load(f)
-            target_number = to_number if to_number.startswith("+") else "+" + to_number
-            for u in users_list:
-                if u.get("phone") and target_number.endswith(u["phone"]):
-                    user_data = u
-                    user_name = u.get("name")
-                    break
-    except Exception as e:
-        log.warning(f"[DUMMY DATA] Error reading user list: {e}")
 
-    # Build local call data
+    # 1. Start Pre-setup Tasks in Parallel
+    async def load_user_data_task():
+        nonlocal user_data, user_name
+        try:
+            from pathlib import Path
+            dummy_path = Path(__file__).parent.parent / "dummy_data.json"
+            if dummy_path.exists():
+                with open(dummy_path, "r", encoding="utf-8") as f:
+                    users_list = json.load(f)
+                    target_number = to_number if to_number.startswith("+") else "+" + to_number
+                    for u in users_list:
+                        if u.get("phone") and target_number.endswith(u["phone"]):
+                            user_data = u
+                            user_name = u.get("name")
+                            log.info(f"[DUMMY] Matched {to_number} to user: {user_name}")
+                            break
+            
+            # 1.1 Transliterate name immediately if found
+            if user_name and any('a' <= char.lower() <= 'z' for char in user_name):
+                try:
+                    async with aiohttp.ClientSession() as translate_session:
+                        async with translate_session.get(f'https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=hi&dt=t&q={user_name}', timeout=1.5) as res:
+                            if res.status == 200:
+                                data = await res.json()
+                                user_name = data[0][0][0]
+                                log.info(f"[TRANSLATE] Transliterated name: {user_name}")
+                except Exception as e:
+                    log.warning(f"[TRANSLATE] Failed to transliterate name '{user_name}': {e}")
+        except Exception as e:
+            log.warning(f"[DUMMY DATA] Error reading user list: {e}")
+
+    # Kick off background data loading immediately
+    user_data_future = asyncio.create_task(load_user_data_task())
+
+    # 2. Wait for user data and then Build Agent Config
+    await user_data_future
+    
     from config import CALL_DATA as GLOBAL_CALL_DATA
     local_call_data = GLOBAL_CALL_DATA.copy()
     if user_data:
         local_call_data["skus"] = user_data.get("skus", GLOBAL_CALL_DATA["skus"])
         local_call_data["current_time"] = user_data.get("current_time", GLOBAL_CALL_DATA["current_time"])
-        log.info(f"[DUMMY] Matched {to_number} to user: {user_name}")
 
-    if user_name and any('a' <= char.lower() <= 'z' for char in user_name):
-        try:
-            async with aiohttp.ClientSession() as translate_session:
-                async with translate_session.get(f'https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=hi&dt=t&q={user_name}', timeout=2) as res:
-                    if res.status == 200:
-                        data = await res.json()
-                        translated = data[0][0][0]
-                        user_name = translated
-        except Exception as e:
-            log.warning(f"[TRANSLATE] Failed to transliterate name '{user_name}': {e}")
-
-    # 2. Load Agent Config from DB
     agent = None
     db_call = None
     greeting = GREETING
@@ -91,22 +99,6 @@ async def plivo_stream(websocket: WebSocket):
             if agent:
                 greeting = agent["greeting"]
                 system_prompt_override = agent["system_prompt"]
-                
-                # Enforce Strict Dashboard Primacy
-                log.info(f"[SESSION] Active Agent ID: {db_call['agent_id']} | Name: {agent.get('name', 'Unknown')}")
-                
-                # Mode Detection: Only inject SKUs if it's an 'Inventory' specific agent
-                # (We check if the prompt actually mentions SKUs or if we are in a campaign)
-                skus = local_call_data.get("skus", [])
-                if skus and system_prompt_override and ("SKU" in system_prompt_override or "inventory" in system_prompt_override.lower()):
-                    skus_str = ", ".join(skus)
-                    current_time_str = local_call_data.get("current_time", "")
-                    sku_info = f"\n*** DATA FOR THIS CALL:\n- SKUS: {skus_str}\n- TIME: {current_time_str}\n"
-                    system_prompt_override = sku_info + system_prompt_override
-                    log.info(f"[AGENT] SKU Injection active for Inventory context.")
-                else:
-                    log.info(f"[AGENT] Strict Mode: Using raw Dashboard prompt for persona.")
-                
                 update_call(call_id, status="in-progress", started_at=datetime.utcnow().isoformat() + "Z")
 
                 try:
@@ -138,10 +130,7 @@ async def plivo_stream(websocket: WebSocket):
     voice_id = agent.get("voice") if agent else None
     
     # 🔥 HOT LATENCY FIX: Start generating greeting AND fillers IMMEDIATELY
-    from services.tts import update_tts_cache
-    
-    # 🔥 HOT LATENCY FIX: Start generating greeting AND fillers IMMEDIATELY
-    from services.tts import update_tts_cache
+    from services.tts import update_tts_cache, get_tts_cache_key, TTS_CACHE
     
     async def prepare_fillers():
         fillers = ["जी", "जी बताइए", "जी देख रही हूँ"]
@@ -168,7 +157,14 @@ async def plivo_stream(websocket: WebSocket):
         else:
             log.warning("[GREET] Greeting generation failed.")
 
-    greeting_prep_task = asyncio.create_task(prepare_greeting())
+    # Start generation only if NOT in cache (to save GPU cycles)
+    g_key = get_tts_cache_key(greeting, voice_id, agent_language)
+    if g_key not in TTS_CACHE:
+        greeting_prep_task = asyncio.create_task(prepare_greeting())
+    else:
+        log.info("[GREET] Greeting already in cache, skipping generation task.")
+        greeting_prep_task = asyncio.create_task(asyncio.sleep(0))
+        
     fillers_prep_task = asyncio.create_task(prepare_fillers())
 
     # Check for pre-setup session (STT + TTS already connected)

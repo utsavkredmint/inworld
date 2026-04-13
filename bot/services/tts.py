@@ -38,9 +38,25 @@ DEFAULT_REF_AUDIO = os.getenv("DEFAULT_REF_AUDIO", os.path.join(os.path.dirname(
 DEFAULT_REF_TEXT = os.getenv("DEFAULT_REF_TEXT", "नमस्ते, मैं आपकी सहायता के लिए तैयार हूँ।")
 
 async def init_tts():
-    """Warms up the model at server startup."""
+    """Warms up the model at server startup with a real generation."""
     log.info("[TTS] Warming up OmniVoice model...")
-    await _get_model()
+    model = await _get_model()
+    if model:
+        try:
+            # DUMMY GENERATION: Crucial to compile CUDA kernels and warm up GPU
+            # We use a very short phrase in both languages to be thorough
+            log.info("[TTS] Performing dummy generation for warmup...")
+            ref_audio = _resolve_audio_path(DEFAULT_REF_AUDIO)
+            await asyncio.get_event_loop().run_in_executor(None, lambda: model.generate(
+                text="नमस्ते",
+                ref_audio=ref_audio,
+                ref_text=DEFAULT_REF_TEXT,
+                language="hindi",
+                num_inference_steps=10
+            ))
+            log.info("[TTS] Warm-up generation successful.")
+        except Exception as e:
+            log.error(f"[TTS] Warm-up generation failed: {e}")
     log.info("[TTS] Warm-up complete.")
 
 async def _get_model():
@@ -141,7 +157,7 @@ def _resolve_audio_path(path):
     
     return path
 
-async def omnivoice_tts(text, voice_id=None, language="hindi", num_inference_steps=35):
+async def omnivoice_tts(text, voice_id=None, language="hindi", num_inference_steps=20):
     """Generate audio using OmniVoice with Cache-Awareness."""
     
     # 🚀 LATENCY WIN: Check cache BEFORE doing anything else
@@ -275,19 +291,21 @@ async def stream_tts_to_plivo(text, tts_ctx, plivo_ws, voice_id=None, language="
     log.info(f"[STREAM] Parallel processing {len(final_chunks)} chunks.")
     
     # Start all generations concurrently
-    async def get_audio(sentence):
+    async def get_audio(index, sentence):
+        # 🔥 ULTRA LATENCY OPTIMIZATION: Use fewer steps for the FIRST sentence
+        steps = 15 if index == 0 else 20
         key = get_tts_cache_key(sentence, voice_id, language)
         if key in TTS_CACHE:
             return TTS_CACHE[key]
-        audio = await omnivoice_tts(sentence, voice_id, language)
+        audio = await omnivoice_tts(sentence, voice_id, language, num_inference_steps=steps)
         if audio: TTS_CACHE[key] = audio
         return audio
 
-    audio_tasks = [get_audio(s) for s in final_chunks]
+    audio_tasks = [get_audio(i, s) for i, s in enumerate(final_chunks)]
     total_mulaw = b""
 
     # Stream in order
-    for i, task in enumerate(audio_tasks):
+    for task in audio_tasks:
         mulaw = await task
         if not mulaw: continue
         total_mulaw += mulaw

@@ -11,12 +11,12 @@ DG_URL = (
     "?encoding=mulaw"
     "&sample_rate=8000"
     "&channels=1"
-    "&model=nova-3"
+    "&model=nova-2"
     "&language=hi"
     "&interim_results=true"
-    "&endpointing=1200"
-    "&smart_format=false"
-    "&punctuate=false"
+    "&endpointing=600"
+    "&smart_format=true"
+    "&punctuate=true"
 )
 
 _dg_ws = None
