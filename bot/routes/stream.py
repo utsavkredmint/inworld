@@ -217,7 +217,7 @@ async def plivo_stream(websocket: WebSocket):
         except Exception as e:
             log.error(f"[FILLER] Injection failed: {e}")
 
-    async def speak(text, is_filler=False, language=None, manual_audio=None):
+    async def speak(text, is_filler=False, language=None):
         nonlocal is_speaking, speak_start_ts
         tts_start = time.time()
         is_speaking = True
@@ -229,22 +229,8 @@ async def plivo_stream(websocket: WebSocket):
         prepared = prepare_for_tts(text)
         cache_key = f"{prepared}_{voice_id}_{target_tts_lang}"
 
-        # 🚀 REAL-TIME OVERRIDE: Play manual audio if provided (used for instant fillers)
-        if manual_audio:
-            log.info(f"[SPEAK] Playing manual/filler audio for: {text[:20]}")
-            audio = manual_audio
-            try:
-                msg = {
-                    "event": "media",
-                    "media": {"payload": base64.b64encode(audio).decode()}
-                }
-                if stream_sid: msg["streamSid"] = stream_sid
-                await websocket.send_text(json.dumps(msg))
-            except:
-                pass
-        
-        # Check pre-built TTS cache
-        elif cache_key in TTS_CACHE:
+        # Check pre-built TTS cache for instant playback (zero TTS latency)
+        if cache_key in TTS_CACHE:
             audio = TTS_CACHE[cache_key]
             log.info(f"[SPEAK] Cache HIT for: {text[:40]}")
             # Send cached audio immediately
@@ -437,7 +423,7 @@ async def plivo_stream(websocket: WebSocket):
         # Pre-cache SKUs in background
         asyncio.create_task(_pre_cache_skus())
 
-
+    asyncio.create_task(_init_and_greet())
 
 
     async def audio_forwarder():
@@ -518,7 +504,10 @@ async def plivo_stream(websocket: WebSocket):
                         log.info(f"[SKIP] Short snippet while bot speaking: '{text}' — ignoring.")
                         continue 
 
-
+                # 🚀 Instant Filler Logic
+                # Play filler immediately if we have text and user stopped talking
+                if text and not is_speaking:
+                    asyncio.create_task(_play_filler())
 
                 # Process the transcript
                 result = await _process_text(text, target_lang=tts_language)
@@ -529,56 +518,18 @@ async def plivo_stream(websocket: WebSocket):
             except Exception as e:
                 log.error(f"[TRANSCRIPT] Loop error: {e}")
 
-    async def filler_trigger_loop():
-        """🚀 ULTRA-LOW LATENCY: Trigger fillers based on interim transcripts."""
-        from services import stt as stt_module
-        filler_triggered = False
-
-        while True:
-            try:
-                if stt_module._interim_queue is None:
-                    await asyncio.sleep(0.1)
-                    continue
-
-                transcript = await stt_module._interim_queue.get()
-                
-                # None means 'is_final' was received, reset for next utterance
-                if transcript is None:
-                    filler_triggered = False
-                    continue
-
-                # If we've already triggered for this sentence, wait for next one
-                if filler_triggered:
-                    continue
-
-                # If user said something meaningful → Trigger Filler INSTANTLY
-                if len(transcript.strip()) >= 1:
-                    if is_speaking:
-                        # Don't filler if bot is speaking (interruption logic handles that)
-                        continue
-                    
-                    log.info(f"[FILLER] 🚀 Interim trigger: '{transcript}'")
-                    # Play random filler in background
-                    import random
-                    f = random.choice(["जी", "जी बताइए", "जी देख रही हूँ"])
-                    audio = filler_cache.get(f)
-                    if audio:
-                        asyncio.create_task(speak(f, manual_audio=audio))
-                        filler_triggered = True
-            except Exception as e:
-                log.error(f"[FILLER] Trigger error: {e}")
-                await asyncio.sleep(0.5)
+    forwarder_task = asyncio.create_task(audio_forwarder())
+    transcript_task = asyncio.create_task(transcript_loop())
 
     try:
-        # 🛰️ Run all loops in parallel
-        await asyncio.gather(
-            audio_forwarder(),
-            transcript_loop(),
-            filler_trigger_loop(), # 🚀 The latency killer
-            _init_and_greet()
+        done, pending = await asyncio.wait(
+            [forwarder_task, transcript_task],
+            return_when=asyncio.FIRST_COMPLETED
         )
+        for task in pending:
+            task.cancel()
     except Exception as e:
-        log.error(f"[STREAM] Fatal error in call loops: {e}")
+        log.error(f"Main loop error: {e}")
     finally:
         # Save call completion to DB
         if call_id:
