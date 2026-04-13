@@ -92,17 +92,20 @@ async def plivo_stream(websocket: WebSocket):
                 greeting = agent["greeting"]
                 system_prompt_override = agent["system_prompt"]
                 
+                # Enforce Strict Dashboard Primacy
+                log.info(f"[SESSION] Active Agent ID: {db_call['agent_id']} | Name: {agent.get('name', 'Unknown')}")
+                
                 # Mode Detection: Only inject SKUs if it's an 'Inventory' specific agent
                 # (We check if the prompt actually mentions SKUs or if we are in a campaign)
                 skus = local_call_data.get("skus", [])
-                if skus and ("SKU" in system_prompt_override or "inventory" in system_prompt_override.lower()):
+                if skus and system_prompt_override and ("SKU" in system_prompt_override or "inventory" in system_prompt_override.lower()):
                     skus_str = ", ".join(skus)
                     current_time_str = local_call_data.get("current_time", "")
                     sku_info = f"\n*** DATA FOR THIS CALL:\n- SKUS: {skus_str}\n- TIME: {current_time_str}\n"
                     system_prompt_override = sku_info + system_prompt_override
-                    log.info(f"[AGENT] SKU Injection active for Inventory prompt.")
+                    log.info(f"[AGENT] SKU Injection active for Inventory context.")
                 else:
-                    log.info(f"[AGENT] Generic Mode: Using raw Dashboard prompt.")
+                    log.info(f"[AGENT] Strict Mode: Using raw Dashboard prompt for persona.")
                 
                 update_call(call_id, status="in-progress", started_at=datetime.utcnow().isoformat() + "Z")
 
