@@ -56,19 +56,6 @@ async def get_agent_response(
     STREAMS the LLM response. 
     Yields: (text_chunk, is_final, metadata_if_final)
     """
-    hist_str = ""
-    for h in history[-5:]:
-        role = "Bot" if h["role"] == "assistant" else "User"
-        hist_str += f"{role}: {h['content']}\n"
-
-    user_msg = (
-        f"CURRENT_STATE: {state}\n"
-        f"CURRENT_STOCK: {json.dumps(current_stock)}\n"
-        f"LAST_BOT_MESSAGE: {last_bot_msg}\n"
-        f"HISTORY:\n{hist_str}"
-        f"USER_SAID: {user_text}"
-    )
-
     try:
         prompt = system_prompt_override if system_prompt_override else build_agent_prompt(call_data)
         if not is_generic:
@@ -94,13 +81,25 @@ async def get_agent_response(
         # ALWAYS required for either type
         prompt += '\n*** FORMAT: JSON ONLY. Put "response" field FIRST.\n{"response": "reply", "state": "current_state", "terminate": false, "stock": {}}\n'
 
+        user_msg = (
+            f"CURRENT_STATE: {state}\n"
+            f"CURRENT_STOCK: {json.dumps(current_stock)}\n"
+            f"LAST_BOT_MESSAGE: {last_bot_msg}\n"
+            f"USER_SAID: {user_text}"
+        )
+
+        messages = [{"role": "system", "content": prompt}]
+        # Add history (last 5 messages)
+        for h in history[-5:]:
+            messages.append({"role": h["role"], "content": h["content"]})
+        
+        # Current User Interaction
+        messages.append({"role": "user", "content": user_msg})
+
         # Groq Stream
         stream = await groq_client.chat.completions.create(
             model="llama-3.1-8b-instant",
-            messages=[
-                {"role": "system", "content": prompt},
-                {"role": "user", "content": user_msg}
-            ],
+            messages=messages,
             max_tokens=250,
             temperature=0,
             stream=True,
@@ -108,7 +107,6 @@ async def get_agent_response(
         )
 
         full_raw = ""
-        extracted_text = ""
         yielded_index = 0
         
         async for chunk in stream:
@@ -116,21 +114,23 @@ async def get_agent_response(
             full_raw += delta
             
             # Simple extraction logic for the "response" field as it streams
-            if '"response": "' in full_raw and not extracted_text:
+            if '"response": "' in full_raw:
                 start_idx = full_raw.find('"response": "') + 13
                 current_content = full_raw[start_idx:]
                 new_text = current_content[yielded_index:]
                 
                 # We yield whenever we see space or punctuation to keep audio delivery smooth
-                if any(p in new_text for p in [" ", "।", ".", "?", "!", "\n"]):
+                if any(char in new_text for char in [" ", "।", ".", "?", "!", "\n"]):
                     last_p = -1
                     for i, char in enumerate(new_text):
                         if char in [" ", "।", ".", "?", "!", "\n"]:
                             last_p = i
                     
                     if last_p != -1:
-                        chunk_to_yield = new_text[:last_p+1]
-                        yield (chunk_to_yield, False, None)
+                        chunk_to_yield = new_text[:last_p+1].strip()
+                        # Only yield if it contains Hnd or Eng characters
+                        if any('a'<=c.lower()<='z' or '\u0900'<=c<='\u097f' for c in chunk_to_yield):
+                            yield (chunk_to_yield, False, None)
                         yielded_index += last_p + 1
 
         # End of stream: Finalize extraction and return metadata
@@ -139,8 +139,8 @@ async def get_agent_response(
             end_idx = full_raw.find('"', start_idx)
             if end_idx != -1:
                 final_text = full_raw[start_idx:end_idx]
-                residual = final_text[yielded_index:]
-                if residual.strip():
+                residual = final_text[yielded_index:].strip()
+                if residual and any('a'<=c.lower()<='z' or '\u0900'<=c<='\u097f' for c in residual):
                     yield (residual, False, None)
 
         data = json.loads(full_raw)
