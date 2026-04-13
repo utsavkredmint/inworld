@@ -158,6 +158,7 @@ async def plivo_stream(websocket: WebSocket):
     first_chunk_ts = None
     vad = SileroVAD()
     speak_start_ts = 0
+    stream_ready = asyncio.Event() # 🔥 NEW: Sync event for Plivo connection
     tts_ctx = pre_session["tts_ctx"] if pre_session else TTSContext()
     stt_pre_connected = bool(pre_session and pre_session.get("stt_ready"))
     last_stock = {}
@@ -194,16 +195,19 @@ async def plivo_stream(websocket: WebSocket):
         speak_start_ts = time.time()
         interrupt_event.clear()
 
-        # Use the provided language override (mapped) or fall back to agent default
+        # Target language mapping
         target_tts_lang = language or tts_language or agent_language
         prepared = prepare_for_tts(text)
         cache_key = f"{prepared}_{voice_id}_{target_tts_lang}"
+        audio = None
 
-        # Check pre-built TTS cache for instant playback (zero TTS latency)
+        # 1. OPTIMIZATION: Wait for Plivo Link before doing ANYTHING
+        await stream_ready.wait()
+
+        # 2. CACHE HIT
         if cache_key in TTS_CACHE:
             audio = TTS_CACHE[cache_key]
             log.info(f"[SPEAK] Cache HIT for: {text[:40]}")
-            # Send cached audio immediately
             try:
                 msg = {
                     "event": "media",
@@ -211,12 +215,11 @@ async def plivo_stream(websocket: WebSocket):
                 }
                 if stream_sid: msg["streamSid"] = stream_sid
                 await websocket.send_text(json.dumps(msg))
-            except:
-                pass
+            except Exception as e:
+                log.error(f"[SPEAK] Cache playback failed: {e}")
         else:
+            # 3. GENERATION
             log.info(f"[SPEAK] Streaming TTS for: {text[:40]}... (steps={steps})")
-            # This streams directly to Plivo WebSocket internally!
-            # Modified stream_tts_to_plivo to support steps (coming soon) or fallback to omnivoice
             audio = await omnivoice_tts(text, voice_id=voice_id, language=target_tts_lang, steps=steps)
             if audio:
                 try:
@@ -226,8 +229,8 @@ async def plivo_stream(websocket: WebSocket):
                     }
                     if stream_sid: msg["streamSid"] = stream_sid
                     await websocket.send_text(json.dumps(msg))
-                except:
-                    pass
+                except Exception as e:
+                    log.error(f"[SPEAK] Generated playback failed: {e}")
 
         tts_ms = int((time.time() - tts_start) * 1000)
         if not audio:
@@ -242,6 +245,7 @@ async def plivo_stream(websocket: WebSocket):
             await asyncio.wait_for(interrupt_event.wait(), timeout=duration)
         except asyncio.TimeoutError:
             pass
+            
         if interrupt_event.is_set():
             try:
                 await websocket.send_text(json.dumps({"event": "clearAudio"}))
@@ -426,8 +430,10 @@ async def plivo_stream(websocket: WebSocket):
 
                 msg = json.loads(raw)
                 if msg.get("event") == "start":
+                    nonlocal stream_sid
                     stream_sid = msg.get("start", {}).get("streamSid")
                     log.info(f"[PLIVO] Stream started: {stream_sid}")
+                    stream_ready.set() # 🚀 SIGNAL: Bot can now start speaking
                 
                 if msg.get("event") == "media":
                     payload = msg.get("media", {}).get("payload", "")
