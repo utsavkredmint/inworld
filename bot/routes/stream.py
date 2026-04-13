@@ -168,23 +168,21 @@ async def plivo_stream(websocket: WebSocket):
         else:
             log.warning("[GREET] Greeting generation failed.")
 
-    # Check for pre-setup session (STT + TTS already connected)
-    from call_sessions import get_session
-    pre_session = get_session(call_id) if call_id else None
-    tts_ctx = pre_session["tts_ctx"] if pre_session else TTSContext()
-    stt_pre_connected = bool(pre_session and pre_session.get("stt_ready"))
-
     # 🚀 LATENCY WIN: Start setup tasks concurrently
     setup_tasks = []
     if not stt_pre_connected:
         setup_tasks.append(stt_connect())
-    if not (pre_session and tts_ctx): # Using tts_ctx instead of pre_session.get
+    if not (pre_session and pre_session.get("tts_ctx")):
         setup_tasks.append(tts_ctx.open())
     
     setup_future = asyncio.gather(*setup_tasks) if setup_tasks else asyncio.sleep(0)
     
     greeting_prep_task = asyncio.create_task(prepare_greeting())
     fillers_prep_task = asyncio.create_task(prepare_fillers())
+
+    # Check for pre-setup session (STT + TTS already connected)
+    from call_sessions import get_session
+    pre_session = get_session(call_id) if call_id else None
 
     history = []
     is_speaking = False
@@ -198,6 +196,8 @@ async def plivo_stream(websocket: WebSocket):
     first_chunk_ts = None
     vad = SileroVAD()
     speak_start_ts = 0
+    tts_ctx = pre_session["tts_ctx"] if pre_session else TTSContext()
+    stt_pre_connected = bool(pre_session and pre_session.get("stt_ready"))
     last_stock = {}
     is_initial_greeting = True # New guard to prevent interruption during greeting
     
@@ -480,7 +480,7 @@ async def plivo_stream(websocket: WebSocket):
             try:
                 # Wait for transcript (even while bot is speaking — Deepgram filters echo)
                 start_wait = time.time()
-                text = await get_final_transcript(timeout=0.6) # Reduced to 0.6s for ultra-fast response
+                text = await get_final_transcript(timeout=4) # Reduced from 10 to be more responsive
                 stt_ms = int((time.time() - start_wait) * 1000)
 
                 if not text:

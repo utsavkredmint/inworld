@@ -7,13 +7,14 @@ from config import DEEPGRAM_API_KEY
 log = logging.getLogger(__name__)
 
 DG_URL = (
-    "wss://api.deepgram.com/v2/listen"
+    "wss://api.deepgram.com/v1/listen"
     "?encoding=mulaw"
     "&sample_rate=8000"
     "&channels=1"
-    "&model=flux"
+    "&model=nova-3"
     "&language=hi"
     "&interim_results=true"
+    "&endpointing=1200"
     "&smart_format=false"
     "&punctuate=false"
 )
@@ -115,7 +116,7 @@ async def send_audio_chunk(chunk):
             pass
 
 
-async def get_final_transcript(timeout=0.6):
+async def get_final_transcript(timeout=3.0):
     """Wait for complete utterance transcript from Deepgram."""
     if not _transcript_queue:
         return ""
@@ -124,8 +125,8 @@ async def get_final_transcript(timeout=0.6):
     deadline = asyncio.get_event_loop().time() + timeout
     
     # SILENCE TIMEOUT: If we have text but no speech_final, 
-    # wait only 400ms more for extra words before giving up.
-    silence_timeout = 0.4 
+    # wait only 800ms more for extra words before giving up.
+    silence_timeout = 0.8 
 
     while True:
         now = asyncio.get_event_loop().time()
