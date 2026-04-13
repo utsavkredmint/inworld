@@ -141,7 +141,7 @@ def _resolve_audio_path(path):
     
     return path
 
-async def omnivoice_tts(text, voice_id=None, language="hindi", num_inference_steps=20):
+async def omnivoice_tts(text, voice_id=None, language="hindi", num_inference_steps=35):
     """Generate audio using OmniVoice with Cache-Awareness."""
     
     # 🚀 LATENCY WIN: Check cache BEFORE doing anything else

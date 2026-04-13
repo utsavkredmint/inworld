@@ -168,15 +168,6 @@ async def plivo_stream(websocket: WebSocket):
         else:
             log.warning("[GREET] Greeting generation failed.")
 
-    # 🚀 LATENCY WIN: Start setup tasks concurrently
-    setup_tasks = []
-    if not stt_pre_connected:
-        setup_tasks.append(stt_connect())
-    if not (pre_session and pre_session.get("tts_ctx")):
-        setup_tasks.append(tts_ctx.open())
-    
-    setup_future = asyncio.gather(*setup_tasks) if setup_tasks else asyncio.sleep(0)
-    
     greeting_prep_task = asyncio.create_task(prepare_greeting())
     fillers_prep_task = asyncio.create_task(prepare_fillers())
 
@@ -397,22 +388,30 @@ async def plivo_stream(websocket: WebSocket):
             try:
                 # Add a small delay between tasks to prioritize real-time replies
                 await asyncio.sleep(0.5)
-                await omnivoice_tts(t, voice_id=voice_id, language=tts_language, num_inference_steps=15)
+                await omnivoice_tts(t, voice_id=voice_id, language=tts_language)
             except Exception as e:
                 log.warning(f"[CACHE] Pre-cache failed for '{t}': {e}")
         log.info("[CACHE] Background pre-caching complete.")
 
     async def _init_and_greet():
         nonlocal is_initial_greeting
-        # setup_tasks were moved up to start earlier
+        # 🔗 Start setup (ONLY if not already pre-connected)
+        setup_tasks = []
+        if not stt_pre_connected:
+            setup_tasks.append(stt_connect())
+        if not (pre_session and pre_session.get("tts_ctx")):
+            setup_tasks.append(tts_ctx.open())
+            
+        setup_future = asyncio.gather(*setup_tasks) if setup_tasks else asyncio.sleep(0)
         
         # 🚀 Wait for greeting to be cached or generated
         await greeting_prep_task
         
-        log.info("[GREET] Speaking greeting now. Interruption ENABLED.")
-        is_initial_greeting = False # ENABLED from start for ultra-responsiveness
+        log.info("[GREET] Speaking greeting now. Interruption DISABLED.")
+        is_initial_greeting = True
         await speak(greeting)
-        log.info("[GREET] Greeting finished.")
+        is_initial_greeting = False # Enable interruptions after greeting
+        log.info("[GREET] Greeting finished. Interruption ENABLED.")
 
         if call_id:
             add_message(call_id, "assistant", greeting)
@@ -480,7 +479,7 @@ async def plivo_stream(websocket: WebSocket):
             try:
                 # Wait for transcript (even while bot is speaking — Deepgram filters echo)
                 start_wait = time.time()
-                text = await get_final_transcript(timeout=4) # Reduced from 10 to be more responsive
+                text = await get_final_transcript(timeout=10)
                 stt_ms = int((time.time() - start_wait) * 1000)
 
                 if not text:
