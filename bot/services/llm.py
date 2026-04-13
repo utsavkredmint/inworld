@@ -74,11 +74,11 @@ async def get_agent_response(
                 
                 new_text = text_so_far[yielded_index:]
                 
-                # 🚀 LATENCY WIN: Yield FIRST chunk early (after 1 word) to hide synthesis lag
+                # 🚀 LATENCY WIN: Yield FIRST chunk (3 words) to provide enough audio for the next one to ready
                 words = new_text.strip().split()
-                if yielded_index == 0 and len(words) >= 1:
-                     # If it's the very first word, yield it immediately
-                     chunk_to_yield = words[0]
+                if yielded_index == 0 and len(words) >= 3:
+                     # If we have 3 words, yield them to start synthesis
+                     chunk_to_yield = " ".join(words[:3])
                      if any('\u0900'<=c<='\u097f' or 'a'<=c.lower()<='z' for c in chunk_to_yield):
                          yield (chunk_to_yield + " ", False, None)
                      yielded_index += len(chunk_to_yield) + 1

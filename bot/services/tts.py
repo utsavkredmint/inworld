@@ -142,7 +142,7 @@ def resample_and_to_mulaw(audio_tensor, orig_sr=24000, target_sr=8000):
             # For strict safety in async, we'd need more, but here it's usually one generation at a time per session.
             _resampler = torchaudio.transforms.Resample(
                 orig_sr, target_sr, 
-                lowpass_filter_width=32, # 🚀 Faster than 64
+                lowpass_filter_width=64, # 🚀 Increase for better clarity
                 resampling_method='sinc_interp_hann' 
             )
         audio = _resampler(audio)
@@ -192,8 +192,8 @@ def _resolve_audio_path(path):
     
     return path
 
-async def omnivoice_tts(text, voice_id=None, language="hindi", num_inference_steps=10):
-    """Generate audio using OmniVoice with Cache-Awareness. Steps=10 for speed."""
+async def omnivoice_tts(text, voice_id=None, language="hindi", num_inference_steps=12):
+    """Generate audio using OmniVoice with Cache-Awareness. Steps=12 for clarity."""
     
     # 🚀 LATENCY WIN: Check cache BEFORE doing anything else
     cache_key = get_tts_cache_key(text, voice_id, language)
@@ -255,7 +255,8 @@ async def omnivoice_tts(text, voice_id=None, language="hindi", num_inference_ste
         "units": "यूनिट्स", "unit": "यूनिट", "stock": "स्टॉक", "count": "काउंट",
         "service": "सर्विस", "center": "सेंटर", "car": "कार", "booking": "बुकिंग",
         "check": "चेक", "confirm": "कंफर्म", "kilometers": "किलोमीटर", "kilometer": "किलोमीटर",
-        "km": "किलोमीटर", "okay": "ओके", "ok": "ओके", "sir": "सर", "ma'am": "मैम"
+        "km": "किलोमीटर", "okay": "ओके", "ok": "ओके", "sir": "सर", "ma'am": "मैम",
+        "morning": "मॉर्निंग", "appointment": "अपॉइंटमेंट", "schedule": "शेड्यूल", "thank": "थैंक", "you": "यू"
     }
     import re
     for eng, hin in replacements.items():
@@ -327,8 +328,8 @@ async def stream_tts_to_plivo(text, tts_ctx, plivo_ws, voice_id=None, language="
     
     # Start all generations concurrently
     async def get_audio(index, sentence):
-        # 🔥 ULTRA LATENCY OPTIMIZATION: Use even fewer steps (8) for the FIRST sentence
-        steps = 8 if index == 0 else 10 # 🚀 8 steps is enough for 'first byte'
+        # Restore quality for ALL sentences
+        steps = 12 
         key = get_tts_cache_key(sentence, voice_id, language)
         if key in TTS_CACHE:
             return TTS_CACHE[key]
