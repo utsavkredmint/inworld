@@ -201,9 +201,18 @@ async def trigger_outbound_call(agent_id, phone_number):
         call["call_uuid"] = call_uuid
         call["status"] = "ringing"
         
-        # Pre-setup STT + TTS
+        # Pre-setup STT + TTS + Greeting
         from call_sessions import prepare_session
-        asyncio.create_task(prepare_session(call["id"]))
+        agent = get_agent(agent_id)
+        if agent:
+            asyncio.create_task(prepare_session(
+                call["id"], 
+                greeting=agent["greeting"], 
+                voice_id=agent["voice"], 
+                language=agent["language"]
+            ))
+        else:
+            asyncio.create_task(prepare_session(call["id"]))
         
         return call
     except Exception as e:
