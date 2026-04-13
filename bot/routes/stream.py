@@ -392,18 +392,24 @@ async def plivo_stream(websocket: WebSocket):
         await setup_future
         log.info("[SETUP] Call identity and streaming ready.")
         
-        # Pre-cache in background while greeting plays
-        asyncio.create_task(_pre_cache_skus())
-        
-        # Pre-generate Fillers for 100ms latency (Wait 2s so Greeting is perfect)
-        await asyncio.sleep(2.0)
-        fillers = ["जी", "जी बताइए", "जी देख रही हूँ"]
-        for f in fillers:
-            try:
-                audio = await omnivoice_tts(f, voice_id=voice_id, language=tts_language)
-                if audio: filler_cache[f] = audio
-            except: pass
-        log.info(f"[CACHE] Ready with {len(filler_cache)} instant fillers")
+        async def delayed_caching():
+            # Wait 8 seconds so the first real user interaction gets 100% GPU priority
+            await asyncio.sleep(8.0)
+            log.info("[CACHE] Starting background pre-generation task...")
+            
+            # Pre-cache in background while session is active
+            asyncio.create_task(_pre_cache_skus())
+            
+            # Pre-generate Fillers for 100ms latency
+            fillers = ["जी", "जी बताइए", "जी देख रही हूँ"]
+            for f in fillers:
+                try:
+                    audio = await omnivoice_tts(f, voice_id=voice_id, language=tts_language)
+                    if audio: filler_cache[f] = audio
+                except: pass
+            log.info(f"[CACHE] Ready with {len(filler_cache)} instant fillers")
+
+        asyncio.create_task(delayed_caching())
 
     asyncio.create_task(_init_and_greet())
 

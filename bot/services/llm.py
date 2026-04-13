@@ -84,13 +84,20 @@ async def get_agent_response(
         role = "Bot" if h["role"] == "assistant" else "User"
         hist_str += f"{role}: {h['content']}\n"
 
-    user_msg = (
-        f"CURRENT_STATE: {state}\n"
-        f"CURRENT_STOCK: {json.dumps(current_stock)}\n"
-        f"LAST_BOT_MESSAGE: {last_bot_msg}\n"
-        f"HISTORY:\n{hist_str}"
-        f"USER_SAID: {user_text}"
-    )
+    if not is_generic:
+        user_msg = (
+            f"CURRENT_STATE: {state}\n"
+            f"CURRENT_STOCK: {json.dumps(current_stock)}\n"
+            f"LAST_BOT_MESSAGE: {last_bot_msg}\n"
+            f"HISTORY:\n{hist_str}"
+            f"USER_SAID: {user_text}"
+        )
+    else:
+        # 🔥 GENERIC PERSONA MODE: No stock/state clutter to distract the AI
+        user_msg = (
+            f"CONVERSATION_HISTORY:\n{hist_str}"
+            f"USER_LATEST_MESSAGE: {user_text}"
+        )
 
     raw = ""
 
