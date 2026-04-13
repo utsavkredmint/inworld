@@ -183,7 +183,7 @@ async def plivo_stream(websocket: WebSocket):
                 "event": "media",
                 "media": {"payload": payload}
             }
-            if stream_sid: msg["streamSid"] = stream_sid
+            if stream_sid: msg["streamId"] = stream_sid
             await websocket.send_text(json.dumps(msg))
         except Exception as e:
             log.error(f"[FILLER] Injection failed: {e}")
@@ -213,7 +213,7 @@ async def plivo_stream(websocket: WebSocket):
                     "event": "media",
                     "media": {"payload": base64.b64encode(audio).decode()}
                 }
-                if stream_sid: msg["streamSid"] = stream_sid
+                if stream_sid: msg["streamId"] = stream_sid
                 await websocket.send_text(json.dumps(msg))
             except Exception as e:
                 log.error(f"[SPEAK] Cache playback failed: {e}")
@@ -227,7 +227,7 @@ async def plivo_stream(websocket: WebSocket):
                         "event": "media",
                         "media": {"payload": base64.b64encode(audio).decode()}
                     }
-                    if stream_sid: msg["streamSid"] = stream_sid
+                    if stream_sid: msg["streamId"] = stream_sid
                     await websocket.send_text(json.dumps(msg))
                 except Exception as e:
                     log.error(f"[SPEAK] Generated playback failed: {e}")
