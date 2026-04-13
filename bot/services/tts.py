@@ -142,7 +142,14 @@ def _resolve_audio_path(path):
     return path
 
 async def omnivoice_tts(text, voice_id=None, language="hindi", num_inference_steps=35):
-    """Generate audio using OmniVoice."""
+    """Generate audio using OmniVoice with Cache-Awareness."""
+    
+    # 🚀 LATENCY WIN: Check cache BEFORE doing anything else
+    cache_key = get_tts_cache_key(text, voice_id, language)
+    if cache_key in TTS_CACHE:
+        log.info(f"[TTS] Cache HIT for: {text[:40]}...")
+        return TTS_CACHE[cache_key]
+
     model = await _get_model()
     if not model:
         log.error("[TTS] Model not loaded.")
