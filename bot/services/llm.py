@@ -7,14 +7,9 @@ log = logging.getLogger(__name__)
 groq_client = AsyncGroq(api_key=GROQ_API_KEY)
 
 # Default fallback prompt if an agent has NO custom prompt in DB
-DEFAULT_SYSTEM_PROMPT = """*** MISSION:
-You are a helpful voice assistant. Be natural, conversational, and polite.
-
-*** RULES:
-1. Hindi only. Keep total response < 15 words.
-2. Natural flow - avoid repeating yourself.
-3. If user wants to end -> Respond politely and set terminate: true.
-"""
+DEFAULT_SYSTEM_PROMPT = """You are a helpful Hindi voice assistant.
+Rules: Hindi only. < 15 words. Natural flow.
+If ending, set terminate: true."""
 
 
 async def get_agent_response(
@@ -35,20 +30,10 @@ async def get_agent_response(
         # 1. Base System Prompt (Truly Dynamic)
         base_prompt = system_prompt_override if system_prompt_override and system_prompt_override.strip() else DEFAULT_SYSTEM_PROMPT
         
-        # 2. Add Session Context (Operational only - not for bot to speak)
-        context_block = f"""
-*** OPERATIONAL_CONTEXT:
-- CURRENT_STATE: {state}
-- CURRENT_STOCK: {json.dumps(current_stock)}
-- LAST_BOT_MSG: {last_bot_msg}
+        # 2. Add Session Context (Lean)
+        context_block = f'Context: State={state}, Stock={json.dumps(current_stock)}, LastMsg="{last_bot_msg}"'
 
-*** OUTPUT_RULES:
-1. Response MUST be in JSON.
-2. The "response" field should contains ONLY what you want for the text-to-speech. 
-3. DO NOT repeat the keys (like "response" or "state") or the operational context labels in your spoken reply.
-"""
-
-        full_system_prompt = base_prompt + "\n" + context_block + '\n*** FORMAT: JSON ONLY.\n{"response": "reply", "state": "current_state", "terminate": false, "stock": {}}\n'
+        full_system_prompt = f"{base_prompt}\n{context_block}\nOutput JSON with key 'response' first."
 
         messages = [{"role": "system", "content": full_system_prompt}]
         
@@ -66,6 +51,7 @@ async def get_agent_response(
             max_tokens=250,
             temperature=0,
             stream=True,
+            # Use json_object format for better reliability
             response_format={"type": "json_object"}
         )
 
@@ -88,11 +74,21 @@ async def get_agent_response(
                 
                 new_text = text_so_far[yielded_index:]
                 
-                # Yield at sentence boundaries or spaces
-                if any(char in new_text for char in [" ", "।", ".", "?", "!", "\n"]):
+                # 🚀 LATENCY WIN: Yield FIRST chunk early (after 1 word) to hide synthesis lag
+                words = new_text.strip().split()
+                if yielded_index == 0 and len(words) >= 1:
+                     # If it's the very first word, yield it immediately
+                     chunk_to_yield = words[0]
+                     if any('\u0900'<=c<='\u097f' or 'a'<=c.lower()<='z' for c in chunk_to_yield):
+                         yield (chunk_to_yield + " ", False, None)
+                     yielded_index += len(chunk_to_yield) + 1
+                     continue
+
+                # Yield at sentence boundaries (full stop, question mark, etc.)
+                if any(char in new_text for char in ["।", ".", "?", "!", "\n"]):
                     last_p = -1
                     for i, char in enumerate(new_text):
-                        if char in [" ", "।", ".", "?", "!", "\n"]:
+                        if char in ["।", ".", "?", "!", "\n"]:
                             last_p = i
                     
                     if last_p != -1:
@@ -119,7 +115,6 @@ async def get_agent_response(
         updated_stock = current_stock.copy()
         if stock:
             for k, v in stock.items():
-                # Allow updating if value is meaningful
                 updated_stock[k] = v
 
         yield (None, True, (response, next_state, terminate, updated_stock))

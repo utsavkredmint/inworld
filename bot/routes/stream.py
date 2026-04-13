@@ -114,7 +114,8 @@ async def plivo_stream(websocket: WebSocket):
         if not stream_sid:
             log.info(f"[SPEAK] Waiting for SID to speak: {text[:20]}...")
             try:
-                await asyncio.wait_for(stream_ready_event.wait(), timeout=2.0)
+                # 🚀 REDUCE TIMEOUT: If SID isn't here in 1s, it's a major issue
+                await asyncio.wait_for(stream_ready_event.wait(), timeout=1.0)
             except asyncio.TimeoutError:
                 log.warning("[SPEAK] Timeout waiting for SID. Proceeding anyway.")
             
