@@ -84,20 +84,13 @@ async def get_agent_response(
         role = "Bot" if h["role"] == "assistant" else "User"
         hist_str += f"{role}: {h['content']}\n"
 
-    if not is_generic:
-        user_msg = (
-            f"CURRENT_STATE: {state}\n"
-            f"CURRENT_STOCK: {json.dumps(current_stock)}\n"
-            f"LAST_BOT_MESSAGE: {last_bot_msg}\n"
-            f"HISTORY:\n{hist_str}"
-            f"USER_SAID: {user_text}"
-        )
-    else:
-        # 🔥 GENERIC PERSONA MODE: No stock/state clutter to distract the AI
-        user_msg = (
-            f"CONVERSATION_HISTORY:\n{hist_str}"
-            f"USER_LATEST_MESSAGE: {user_text}"
-        )
+    user_msg = (
+        f"CURRENT_STATE: {state}\n"
+        f"CURRENT_STOCK: {json.dumps(current_stock)}\n"
+        f"LAST_BOT_MESSAGE: {last_bot_msg}\n"
+        f"HISTORY:\n{hist_str}"
+        f"USER_SAID: {user_text}"
+    )
 
     raw = ""
 
@@ -197,124 +190,3 @@ async def get_agent_response(
 
         # fallback safe response - DON'T terminate on single error
         return ("जी, समझ नहीं आया। क्या आप फिर से बता सकते हैं?", state, False, current_stock)
-
-
-async def get_streaming_agent_response(
-    state,
-    last_bot_msg,
-    history,
-    user_text,
-    call_data,
-    current_stock,
-    system_prompt_override=None,
-    is_generic=False
-):
-    """
-    Streams the Groq response and yields sentences as they are generated.
-    Yields: ('sentence', text) OR ('json', parsed_data)
-    """
-    prompt = system_prompt_override if system_prompt_override else build_agent_prompt(call_data)
-    
-    # Context cleaning (same as non-streaming)
-    hist_str = ""
-    for h in history[-5:]:
-        role = "Bot" if h["role"] == "assistant" else "User"
-        hist_str += f"{role}: {h['content']}\n"
-
-    if not is_generic:
-        user_msg = (
-            f"CURRENT_STATE: {state}\n"
-            f"CURRENT_STOCK: {json.dumps(current_stock)}\n"
-            f"LAST_BOT_MESSAGE: {last_bot_msg}\n"
-            f"HISTORY:\n{hist_str}"
-            f"USER_SAID: {user_text}"
-        )
-        prompt += "\n*** CRITICAL RUNTIME RULES:\n1. NEVER repeat last bot message.\n2. NEVER ask same SKU again.\n3. If all SKUs filled -> terminate true."
-    else:
-        user_msg = (
-            f"CONVERSATION_HISTORY:\n{hist_str}"
-            f"USER_LATEST_MESSAGE: {user_text}"
-        )
-        prompt += "\n*** RUNTIME RULES:\n1. Follow the OBJECTIVE strictly.\n2. Keep responses natural.\n3. ANTI-HALLUCINATION: If user input is ambiguous, ask for clarification."
-
-    prompt += '\n*** FORMAT: JSON ONLY\n{"response": "reply", "state": "current_state", "terminate": false, "stock": {}}\n'
-
-    full_raw = ""
-    sentence_buffer = ""
-    sentence_endings = ["।", ".", "?", "!", "\n"]
-    response_started = False
-    quote_open = False
-    escaped = False
-
-    try:
-        stream = await groq_client.chat.completions.create(
-            model="llama-3.1-8b-instant",
-            messages=[
-                {"role": "system", "content": prompt},
-                {"role": "user", "content": user_msg}
-            ],
-            max_tokens=250,
-            temperature=0,
-            stream=True,
-            response_format={"type": "json_object"}
-        )
-
-        async for chunk in stream:
-            token = chunk.choices[0].delta.content
-            if not token: continue
-            full_raw += token
-
-            # We try to extract the content of the "response" field while streaming.
-            if not response_started:
-                # Be more flexible with whitespace/case
-                resp_marker = '"response":'
-                if resp_marker in full_raw.replace(" ", ""):
-                    response_started = True
-                    # Find where the actual content starts (after "response": and its opening quote)
-                    start_pos = full_raw.find('"response"') + 10
-                    after_marker = full_raw[start_pos:]
-                    q_start = after_marker.find('"')
-                    if q_start != -1:
-                        quote_open = True
-                        sentence_buffer = after_marker[q_start+1:]
-                continue
-            
-            # If we are inside the "response" quote:
-            if quote_open:
-                # Optimization: process the whole token at once for speed
-                for char in token:
-                    if char == "\\" and not escaped:
-                        escaped = True
-                        continue
-                    if char == '"' and not escaped:
-                        quote_open = False
-                        break
-                    
-                    sentence_buffer += char
-                    escaped = False
-
-                    # If we hit a sentence ending, yield it!
-                    if any(sentence_buffer.endswith(end) for end in sentence_endings):
-                        clean_sentence = sentence_buffer.strip().replace('\\"', '"').replace('\\n', '\n')
-                        if clean_sentence:
-                            yield ("sentence", clean_sentence)
-                        sentence_buffer = ""
-
-        # 🔥 CRITICAL: Flush remaining sentence_buffer if any
-        final_text = sentence_buffer.strip().replace('\\"', '"').replace('\\n', '\n')
-        if final_text:
-            yield ("sentence", final_text)
-
-        # Finally, parse the full raw text as JSON for meta-data
-        try:
-            data = json.loads(full_raw)
-            yield ("json", data)
-        except Exception as e:
-            log.warning(f"Failed to parse final streamed JSON: {e}")
-            yield ("json", {"response": full_raw, "state": state, "terminate": False})
-            yield ("json", {"response": sentence_buffer, "state": state, "terminate": False})
-
-    except Exception as e:
-        log.error(f"Streaming LLM error: {e}")
-        yield ("sentence", "जी, मैं सुन रही हूँ।")
-        yield ("json", {"response": "जी, मैं सुन रही हूँ।", "state": state})

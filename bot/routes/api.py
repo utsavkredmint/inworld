@@ -201,9 +201,9 @@ async def trigger_outbound_call(agent_id, phone_number):
         call["call_uuid"] = call_uuid
         call["status"] = "ringing"
         
-        # Pre-setup STT + TTS (Passing agent_id to pre-generate greeting)
+        # Pre-setup STT + TTS
         from call_sessions import prepare_session
-        asyncio.create_task(prepare_session(call["id"], agent_id))
+        asyncio.create_task(prepare_session(call["id"]))
         
         return call
     except Exception as e:
@@ -216,14 +216,10 @@ async def trigger_outbound_call(agent_id, phone_number):
 @router.post("/calls")
 async def api_trigger_call(req: TriggerCallRequest):
     try:
-        log.info(f"[API] Triggering call to {req.phone_number} for agent {req.agent_id}")
         call = await trigger_outbound_call(req.agent_id, req.phone_number)
         return call
     except Exception as e:
-        import traceback
-        log.error(f"API Error in trigger_outbound_call: {e}")
-        log.error(traceback.format_exc())
-        return JSONResponse(status_code=500, content={"error": f"Internal Server Error: {str(e)}"})
+        return JSONResponse(status_code=500, content={"error": str(e)})
 
 
 @router.get("/calls")
