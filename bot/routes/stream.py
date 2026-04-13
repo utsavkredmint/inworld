@@ -215,6 +215,8 @@ async def plivo_stream(websocket: WebSocket):
         speak_start_ts = time.time()
         interrupt_event.clear()
 
+        log.info(f"[SPEAK] START for: {text[:30]}...")
+
         # Use the provided language override (mapped) or fall back to agent default
         target_tts_lang = language or tts_language or agent_language
         prepared = prepare_for_tts(text)
@@ -223,7 +225,7 @@ async def plivo_stream(websocket: WebSocket):
         # Check pre-built TTS cache for instant playback (zero TTS latency)
         if cache_key in TTS_CACHE:
             audio = TTS_CACHE[cache_key]
-            log.info(f"[SPEAK] Cache HIT for: {text[:40]}")
+            log.info(f"[SPEAK] Cache HIT (Latency=0ms) for: {text[:40]}")
             # Send cached audio immediately
             try:
                 msg = {
@@ -235,9 +237,10 @@ async def plivo_stream(websocket: WebSocket):
             except:
                 pass
         else:
-            log.info(f"[SPEAK] Streaming TTS for: {text[:40]}... (ctx_ready={tts_ctx.ready})")
+            log.info(f"[SPEAK] Streaming TTS (Start) for: {text[:40]}...")
             # This streams directly to Plivo WebSocket internally!
             audio = await stream_tts_to_plivo(text, tts_ctx, websocket, voice_id=voice_id, language=target_tts_lang)
+            log.info(f"[SPEAK] Streaming TTS (Complete) Latency: {int((time.time() - tts_start)*1000)}ms")
             # Fallback to omnivoice_tts if streaming didn't work
             if not audio:
                 log.info(f"[SPEAK] Fallback to direct TTS for: {text[:40]}")
@@ -260,7 +263,7 @@ async def plivo_stream(websocket: WebSocket):
             return
 
         duration = len(audio) / 8000
-        log.info(f"[TTS] {tts_ms}ms | audio={len(audio)}bytes | playback={int(duration*1000)}ms")
+        log.info(f"[TTS] {tts_ms}ms total | audio={len(audio)}bytes | playback={int(duration*1000)}ms")
 
         try:
             await asyncio.wait_for(interrupt_event.wait(), timeout=duration)
