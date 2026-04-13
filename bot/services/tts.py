@@ -34,8 +34,29 @@ _model = None
 _model_lock = asyncio.Lock()
 
 # Reference audio and text defaults
-DEFAULT_REF_AUDIO = os.getenv("DEFAULT_REF_AUDIO", os.path.join(os.path.dirname(os.path.dirname(__file__)), "voices", "default_ref.mp3"))
+DEFAULT_REF_AUDIO_NAME = os.getenv("DEFAULT_REF_AUDIO_NAME", "default_ref.mp3")
 DEFAULT_REF_TEXT = os.getenv("DEFAULT_REF_TEXT", "नमस्ते, मैं आपकी सहायता के लिए तैयार हूँ।")
+
+def _get_default_ref_path():
+    """Return the configured default ref or a smart fallback if missing."""
+    voices_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "voices")
+    primary_path = os.path.join(voices_dir, DEFAULT_REF_AUDIO_NAME)
+    
+    if os.path.exists(primary_path):
+        return primary_path
+        
+    # Smart Fallback: Use the first mp3 found in the voices directory
+    import glob
+    existing_voices = glob.glob(os.path.join(voices_dir, "*.mp3"))
+    if existing_voices:
+        fallback = existing_voices[0]
+        log.info(f"[TTS] Default ref missing. Using smart fallback: {os.path.basename(fallback)}")
+        return fallback
+        
+    log.warning(f"[TTS] No reference voices found in {voices_dir}. Generation may fail.")
+    return primary_path
+
+DEFAULT_REF_AUDIO = _get_default_ref_path()
 
 async def init_tts():
     """Warms up the model and PRE-CACHES all fillers for the default voice."""
