@@ -183,7 +183,8 @@ async def plivo_stream(websocket: WebSocket):
                 "event": "media",
                 "media": {"payload": payload}
             }
-            if stream_sid: msg["streamId"] = stream_sid
+            # Plivo standard: Minimal media packet
+            # if stream_sid: msg["streamId"] = stream_sid
             await websocket.send_text(json.dumps(msg))
         except Exception as e:
             log.error(f"[FILLER] Injection failed: {e}")
@@ -219,7 +220,8 @@ async def plivo_stream(websocket: WebSocket):
                         "event": "media",
                         "media": {"payload": base64.b64encode(chunk).decode()}
                     }
-                    if stream_sid: msg["streamId"] = stream_sid
+                    # Plivo standard: Minimal media packet
+                    # if stream_sid: msg["streamId"] = stream_sid
                     await websocket.send_text(json.dumps(msg))
                     # Wait 20ms to match the audio duration of the chunk
                     await asyncio.sleep(0.018) # Slightly less than 20ms for network overhead
