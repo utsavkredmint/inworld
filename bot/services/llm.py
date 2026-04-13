@@ -6,39 +6,14 @@ from config import GROQ_API_KEY
 log = logging.getLogger(__name__)
 groq_client = AsyncGroq(api_key=GROQ_API_KEY)
 
-TTS_RESPONSE_CACHE = {}
-
-
-def build_agent_prompt(call_data):
-    skus_str = ", ".join(call_data["skus"])
-    current_time = call_data["current_time"]
-
-    return f"""*** MISSION:
-You are Neha from DS Group. Call distributors to collect stock quickly and politely.
-
-*** CONTEXT:
-- SKUS: {skus_str}
-- TIME: {current_time}
+# Default fallback prompt if an agent has NO custom prompt in DB
+DEFAULT_SYSTEM_PROMPT = """*** MISSION:
+You are a helpful voice assistant. Be natural, conversational, and polite.
 
 *** RULES:
 1. Hindi only. Keep total response < 15 words.
-2. Ask each SKU EXACTLY once. If already asked or provided, NEVER repeat.
-3. If user is unclear/doesn't know -> Respond "कोई बात नहीं" and move to NEXT SKU.
-4. Extract numbers from Hindi words. For ranges (e.g. "5-10"), use the HIGHER number.
-5. If user says "busy/interest nahi/baad mein" -> Respond "ठीक है, धन्यवाद!" and set terminate: true.
-
-*** SELECTION LOGIC:
-- Check CURRENT_STOCK.
-- Ask FIRST SKU with null value.
-- If all filled -> State "धन्यवाद, आपका दिन शुभ हो।" and set terminate: true.
-
-*** FORMAT (JSON ONLY):
-{{
-  "response": "Hindi reply (Numbers in Hindi words, e.g. बारह)",
-  "state": "STOCK",
-  "terminate": false,
-  "stock": {{"SKU": number_or_"not_provided"}}
-}}
+2. Natural flow - avoid repeating yourself.
+3. If user wants to end -> Respond politely and set terminate: true.
 """
 
 
@@ -57,46 +32,34 @@ async def get_agent_response(
     Yields: (text_chunk, is_final, metadata_if_final)
     """
     try:
-        prompt = system_prompt_override if system_prompt_override else build_agent_prompt(call_data)
-        if not is_generic:
-            # 🔥 INVENTORY SPECIFIC RULES
-            prompt += """
-*** CRITICAL RUNTIME RULES:
-1. NEVER repeat last bot message.
-2. NEVER ask same SKU again.
-3. If all SKUs filled → terminate true.
-4. If user exit intent → terminate true.
-"""
-        else:
-            # 🔥 GENERIC AGENT RULES (Optimized for Kia/Sales)
-            prompt += """
-*** RUNTIME RULES:
-1. Follow the OBJECTIVE strictly.
-2. Keep responses natural and conversational.
-3. If user wants to end → set "terminate": true.
-4. Extract provided information (date, time, KM) and store it in your internal state.
-5. ANTI-HALLUCINATION: If user input is very short (1-2 words) or ambiguous (e.g., "I", "But", "Wait"), DO NOT jump to the next step. Instead, acknowledge and wait for them to finish their sentence.
+        # 1. Base System Prompt (Truly Dynamic)
+        base_prompt = system_prompt_override if system_prompt_override and system_prompt_override.strip() else DEFAULT_SYSTEM_PROMPT
+        
+        # 2. Add Session Context (Operational only - not for bot to speak)
+        context_block = f"""
+*** OPERATIONAL_CONTEXT:
+- CURRENT_STATE: {state}
+- CURRENT_STOCK: {json.dumps(current_stock)}
+- LAST_BOT_MSG: {last_bot_msg}
+
+*** OUTPUT_RULES:
+1. Response MUST be in JSON.
+2. The "response" field should contains ONLY what you want for the text-to-speech. 
+3. DO NOT repeat the keys (like "response" or "state") or the operational context labels in your spoken reply.
 """
 
-        # ALWAYS required for either type
-        prompt += '\n*** FORMAT: JSON ONLY. Put "response" field FIRST.\n{"response": "reply", "state": "current_state", "terminate": false, "stock": {}}\n'
+        full_system_prompt = base_prompt + "\n" + context_block + '\n*** FORMAT: JSON ONLY.\n{"response": "reply", "state": "current_state", "terminate": false, "stock": {}}\n'
 
-        user_msg = (
-            f"CURRENT_STATE: {state}\n"
-            f"CURRENT_STOCK: {json.dumps(current_stock)}\n"
-            f"LAST_BOT_MESSAGE: {last_bot_msg}\n"
-            f"USER_SAID: {user_text}"
-        )
-
-        messages = [{"role": "system", "content": prompt}]
-        # Add history (last 5 messages)
+        messages = [{"role": "system", "content": full_system_prompt}]
+        
+        # 3. Add History (Last 5 turns)
         for h in history[-5:]:
             messages.append({"role": h["role"], "content": h["content"]})
         
-        # Current User Interaction
-        messages.append({"role": "user", "content": user_msg})
+        # 4. Final User Query (Clean - only the transcript)
+        messages.append({"role": "user", "content": user_text})
 
-        # Groq Stream
+        # 🚀 STREAM from Groq
         stream = await groq_client.chat.completions.create(
             model="llama-3.1-8b-instant",
             messages=messages,
@@ -113,13 +76,19 @@ async def get_agent_response(
             delta = chunk.choices[0].delta.content or ""
             full_raw += delta
             
-            # Simple extraction logic for the "response" field as it streams
+            # Streaming extraction for "response" field
             if '"response": "' in full_raw:
-                start_idx = full_raw.find('"response": "') + 13
+                start_marker = '"response": "'
+                start_idx = full_raw.find(start_marker) + len(start_marker)
                 current_content = full_raw[start_idx:]
-                new_text = current_content[yielded_index:]
                 
-                # We yield whenever we see space or punctuation to keep audio delivery smooth
+                # Check for the closing quote of the "response" field
+                end_idx = current_content.find('"')
+                text_so_far = current_content if end_idx == -1 else current_content[:end_idx]
+                
+                new_text = text_so_far[yielded_index:]
+                
+                # Yield at sentence boundaries or spaces
                 if any(char in new_text for char in [" ", "।", ".", "?", "!", "\n"]):
                     last_p = -1
                     for i, char in enumerate(new_text):
@@ -128,33 +97,30 @@ async def get_agent_response(
                     
                     if last_p != -1:
                         chunk_to_yield = new_text[:last_p+1].strip()
-                        # Only yield if it contains Hnd or Eng characters
+                        # 🔥 FILTER: Ensure it has Hindi or English characters
                         if any('a'<=c.lower()<='z' or '\u0900'<=c<='\u097f' for c in chunk_to_yield):
                             yield (chunk_to_yield, False, None)
                         yielded_index += last_p + 1
 
-        # End of stream: Finalize extraction and return metadata
-        if '"response": "' in full_raw:
-            start_idx = full_raw.find('"response": "') + 13
-            end_idx = full_raw.find('"', start_idx)
-            if end_idx != -1:
-                final_text = full_raw[start_idx:end_idx]
-                residual = final_text[yielded_index:].strip()
-                if residual and any('a'<=c.lower()<='z' or '\u0900'<=c<='\u097f' for c in residual):
-                    yield (residual, False, None)
-
+        # End of stream: Final residue extraction
         data = json.loads(full_raw)
         response = data.get("response", "")
+        
+        # Check if we have un-yielded text from the final response
+        residual = response[yielded_index:].strip()
+        if residual and any('a'<=c.lower()<='z' or '\u0900'<=c<='\u097f' for c in residual):
+            yield (residual, False, None)
+
         next_state = data.get("state", state)
         terminate = data.get("terminate", False)
         stock = data.get("stock", {})
 
-        # merge stock safely (Only for inventory agents)
+        # Merge stock safely
         updated_stock = current_stock.copy()
-        if not is_generic:
+        if stock:
             for k, v in stock.items():
-                if updated_stock.get(k) is None:
-                    updated_stock[k] = v
+                # Allow updating if value is meaningful
+                updated_stock[k] = v
 
         yield (None, True, (response, next_state, terminate, updated_stock))
 

@@ -155,7 +155,15 @@ async def plivo_stream(websocket: WebSocket):
                 log.info(f"[SPEAK] Fallback TTS: {text[:40]}")
                 audio = await omnivoice_tts(text, voice_id=voice_id, language=target_tts_lang)
                 if audio:
-                    msg = {"event": "media", "media": {"payload": base64.b64encode(audio).decode()}, "streamSid": stream_sid, "streamId": stream_sid}
+                    msg = {
+                        "event": "playAudio",
+                        "media": {
+                            "payload": base64.b64encode(audio).decode(),
+                            "contentType": "audio/x-mulaw",
+                            "sampleRate": 8000
+                        },
+                        "streamSid": stream_sid
+                    }
                     await websocket.send_text(json.dumps(msg))
 
         if not audio:
@@ -220,6 +228,12 @@ async def plivo_stream(websocket: WebSocket):
         is_initial_greeting = True
         await speak(greeting)
         is_initial_greeting = False
+        
+        # 🚀 Fix: Add greeting to history so LLM knows context
+        history.append({"role": "assistant", "content": greeting})
+        nonlocal last_bot_response
+        last_bot_response = greeting
+        if call_id: add_message(call_id, "assistant", greeting)
 
     asyncio.create_task(_init_and_greet())
 
