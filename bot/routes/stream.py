@@ -93,6 +93,7 @@ async def plivo_stream(websocket: WebSocket):
                 try:
                     from config import SERVER_URL
                     plivo_client.calls.record(call_uuid=call_uuid, file_format="mp3",
+                        time_limit=3600,
                         callback_url=f"{SERVER_URL}/api/plivo/record_callback?call_id={call_id}",
                         callback_method="POST")
                 except Exception: pass
