@@ -122,6 +122,7 @@ async def plivo_stream(websocket: WebSocket):
     first_chunk_ts = None
     vad = SileroVAD()
     speak_start_ts = 0
+    stream_ready_event = asyncio.Event() # New event for sync
 
     # 🔥 LATENCY PREP: Greeting & Fillers
     from services.tts import update_tts_cache, get_tts_cache_key, TTS_CACHE
@@ -175,6 +176,11 @@ async def plivo_stream(websocket: WebSocket):
 
     async def speak(text, is_filler=False, language=None):
         nonlocal is_speaking, speak_start_ts
+        # 🚀 SYNC: Wait for streamSid before sending ANY audio
+        if not stream_sid:
+            log.info("[SPEAK] Waiting for streamSid synchronization...")
+            await stream_ready_event.wait()
+            
         tts_start = time.time()
         is_speaking = True
         speak_start_ts = time.time()
@@ -265,6 +271,12 @@ async def plivo_stream(websocket: WebSocket):
         setup_future = asyncio.gather(*setup_tasks) if setup_tasks else asyncio.sleep(0)
         
         await greeting_prep_task
+        
+        # 🚀 SYNC: Wait for Plivo stream to be fully ready before greeting
+        if not stream_sid:
+            log.info("[GREET] Waiting for streamSid before speaking...")
+            await stream_ready_event.wait()
+            
         is_initial_greeting = True
         await speak(greeting)
         is_initial_greeting = False
@@ -286,6 +298,8 @@ async def plivo_stream(websocket: WebSocket):
                 msg = json.loads(raw)
                 if msg.get("event") == "start":
                     stream_sid = msg.get("start", {}).get("streamSid")
+                    log.info(f"[PLIVO] Stream started with SID: {stream_sid}")
+                    stream_ready_event.set() # Release any waiting audio calls
                 if msg.get("event") == "media":
                     payload = msg.get("media", {}).get("payload", "")
                     if payload:
