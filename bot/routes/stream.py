@@ -122,7 +122,7 @@ async def plivo_stream(websocket: WebSocket):
     first_chunk_ts = None
     vad = SileroVAD()
     speak_start_ts = 0
-    stream_ready_event = asyncio.Event() # New event for sync
+    stream_ready_event = asyncio.Event()
 
     # 🔥 LATENCY PREP: Greeting & Fillers
     from services.tts import update_tts_cache, get_tts_cache_key, TTS_CACHE
@@ -176,7 +176,6 @@ async def plivo_stream(websocket: WebSocket):
 
     async def speak(text, is_filler=False, language=None):
         nonlocal is_speaking, speak_start_ts
-        # 🚀 SYNC: Wait for streamSid before sending ANY audio
         if not stream_sid:
             log.info("[SPEAK] Waiting for streamSid synchronization...")
             await stream_ready_event.wait()
@@ -271,8 +270,6 @@ async def plivo_stream(websocket: WebSocket):
         setup_future = asyncio.gather(*setup_tasks) if setup_tasks else asyncio.sleep(0)
         
         await greeting_prep_task
-        
-        # 🚀 SYNC: Wait for Plivo stream to be fully ready before greeting
         if not stream_sid:
             log.info("[GREET] Waiting for streamSid before speaking...")
             await stream_ready_event.wait()
@@ -282,8 +279,6 @@ async def plivo_stream(websocket: WebSocket):
         is_initial_greeting = False
         if call_id: add_message(call_id, "assistant", greeting)
         await setup_future
-        from services.tts import omnivoice_tts # Ensure available
-        # Pre-cache SKUs logic removed for brevity but could be added back
         
     asyncio.create_task(_init_and_greet())
 
@@ -297,9 +292,14 @@ async def plivo_stream(websocket: WebSocket):
                 raw = await websocket.receive_text()
                 msg = json.loads(raw)
                 if msg.get("event") == "start":
-                    stream_sid = msg.get("start", {}).get("streamSid")
-                    log.info(f"[PLIVO] Stream started with SID: {stream_sid}")
-                    stream_ready_event.set() # Release any waiting audio calls
+                    start_data = msg.get("start", {})
+                    stream_sid = (start_data.get("stream_id") or 
+                                 start_data.get("streamId") or 
+                                 start_data.get("stream_sid") or 
+                                 start_data.get("streamSid"))
+                    log.info(f"[PLIVO] Stream started. Metadata: {json.dumps(start_data)}")
+                    log.info(f"[PLIVO] SID Detected: {stream_sid}")
+                    stream_ready_event.set()
                 if msg.get("event") == "media":
                     payload = msg.get("media", {}).get("payload", "")
                     if payload:

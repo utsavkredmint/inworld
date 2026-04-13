@@ -104,7 +104,9 @@ def resample_and_to_mulaw(audio_tensor, orig_sr=24000, target_sr=8000):
         audio = audio.squeeze(0)
     
     # 2. Peak Normalization: Ensure max volume is at -1dB (0.9 amplitude)
-    # This is CRITICAL for telephony to avoid 'tinny' or 'metallic' sounds
+    if audio.numel() == 0:
+        return b""
+        
     max_val = torch.abs(audio).max()
     if max_val > 0:
         audio = (audio / max_val) * 0.9
