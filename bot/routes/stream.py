@@ -105,12 +105,16 @@ async def plivo_stream(websocket: WebSocket):
     stream_ready_event = asyncio.Event()
     vad = SileroVAD()
     is_initial_greeting = True
+    
+    # 🚀 SEQUENCE TRACKING: Ensures audio chunks play in order
+    playback_index = 0
+    playback_cond = asyncio.Condition()
 
     # Fillers & TTS Prep
     from services.tts import get_tts_cache_key, TTS_CACHE, update_tts_cache
 
-    async def speak(text, is_filler=False, language=None):
-        nonlocal is_speaking
+    async def speak(text, index=0, is_filler=False, language=None):
+        nonlocal is_speaking, playback_index
         if not stream_sid:
             log.info(f"[SPEAK] Waiting for SID to speak: {text[:20]}...")
             try:
@@ -125,10 +129,19 @@ async def plivo_stream(websocket: WebSocket):
         prepared = prepare_for_tts(text)
         cache_key = get_tts_cache_key(prepared, voice_id, target_tts_lang)
 
-        audio = None
         if cache_key in TTS_CACHE:
             audio = TTS_CACHE[cache_key]
             log.info(f"[SPEAK] Cache HIT: {text[:40]} | Bytes: {len(audio)}")
+            
+            # 🚀 SEQUENCE SYNC: Wait for our turn to play
+            async with playback_cond:
+                log.info(f"[SPEAK] Chunk {index} waiting for turn (Current: {playback_index})")
+                while playback_index < index and not interrupt_event.is_set():
+                    await playback_cond.wait()
+                if interrupt_event.is_set() and index >= playback_index:
+                    log.info(f"[SPEAK] Chunk {index} cancelled by interrupt")
+                    return
+
             # 🚀 CHUNKING: Send cached audio in small parts to prevent Plivo overflow
             chunk_size = 320 # 40ms
             try:
@@ -151,6 +164,15 @@ async def plivo_stream(websocket: WebSocket):
                 log.error(f"[STREAM] WS Send Error: {e}")
         else:
             log.info(f"[SPEAK] Streaming TTS: {text[:40]}")
+            # Note: stream_tts_to_plivo handles its own internal chunking/sending
+            # We wrap it in the sequence wait
+            async with playback_cond:
+                log.info(f"[SPEAK] Chunk {index} waiting for turn (Current: {playback_index})")
+                while playback_index < index and not interrupt_event.is_set():
+                    await playback_cond.wait()
+                if interrupt_event.is_set() and index >= playback_index:
+                    return
+
             audio = await stream_tts_to_plivo(text, TTSContext(), websocket, voice_id=voice_id, language=target_tts_lang, stream_sid=stream_sid)
             if not audio:
                 log.info(f"[SPEAK] Fallback TTS: {text[:40]}")
@@ -179,11 +201,22 @@ async def plivo_stream(websocket: WebSocket):
         if interrupt_event.is_set():
             try: await websocket.send_text(json.dumps({"event": "clearAudio", "streamSid": stream_sid, "streamId": stream_sid}))
             except: pass
+        # 🚀 SEQUENCE SYNC: Move to next index
+        async with playback_cond:
+            playback_index += 1
+            playback_cond.notify_all()
+
         is_speaking = False
         vad.reset()
 
     async def _process_text(text, target_lang=None):
-        nonlocal call_state, last_bot_response, last_stock
+        nonlocal call_state, last_bot_response, last_stock, playback_index
+        
+        # 🚀 RESET SEQUENCE: Every interaction starts from 0
+        async with playback_cond:
+            playback_index = 0
+            playback_cond.notify_all()
+            
         full_text = ""
         last_metadata = None
         
@@ -191,13 +224,15 @@ async def plivo_stream(websocket: WebSocket):
         if call_id: add_message(call_id, "user", text)
         history.append({"role": "user", "content": text})
 
+        chunk_idx = 0
         async for chunk, is_final, metadata in get_agent_response(
             call_state, last_bot_response, history, text, local_call_data, last_stock,
             system_prompt_override=system_prompt_override, is_generic=is_generic_agent
         ):
             if chunk:
                 full_text += chunk
-                asyncio.create_task(speak(chunk, language=target_lang))
+                asyncio.create_task(speak(chunk, index=chunk_idx, language=target_lang))
+                chunk_idx += 1
             if is_final: last_metadata = metadata
 
         if last_metadata:
@@ -227,7 +262,7 @@ async def plivo_stream(websocket: WebSocket):
             if audio: update_tts_cache(greeting, audio, voice_id=voice_id, language=agent_language)
         
         is_initial_greeting = True
-        await speak(greeting)
+        await speak(greeting, index=0)
         is_initial_greeting = False
         
         # 🚀 Fix: Add greeting to history so LLM knows context
@@ -267,6 +302,10 @@ async def plivo_stream(websocket: WebSocket):
                     if len(text.split()) >= 2:
                         log.info(f"[INTERRUPT] User said: {text}")
                         interrupt_event.set()
+                        # 🚀 CLEAR QUEUE: Wake up all waiting speak tasks so they can exit
+                        async with playback_cond:
+                            playback_cond.notify_all()
+                            
                         while is_speaking: await asyncio.sleep(0.01)
                     else: continue
                 
