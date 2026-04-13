@@ -431,9 +431,17 @@ async def plivo_stream(websocket: WebSocket):
                 msg = json.loads(raw)
                 if msg.get("event") == "start":
                     nonlocal stream_sid
-                    stream_sid = msg.get("start", {}).get("streamSid")
-                    log.info(f"[PLIVO] Stream started: {stream_sid}")
-                    stream_ready.set() # 🚀 SIGNAL: Bot can now start speaking
+                    start_data = msg.get("start", {})
+                    log.info(f"[PLIVO] Start Event Data: {start_data}")
+                    # Try both Twilio style (streamSid) and potential Plivo Snake Case (stream_sid/stream_id)
+                    stream_sid = start_data.get("streamSid") or start_data.get("stream_sid") or start_data.get("streamId") or start_data.get("stream_id")
+                    
+                    if not stream_sid:
+                        # Fallback to call_uuid if no stream_id is found
+                        stream_sid = start_data.get("callUuid") or start_data.get("call_uuid")
+                    
+                    log.info(f"[PLIVO] Stream ID locked: {stream_sid}")
+                    stream_ready.set()
                 
                 if msg.get("event") == "media":
                     payload = msg.get("media", {}).get("payload", "")
