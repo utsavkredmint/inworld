@@ -110,7 +110,7 @@ async def plivo_stream(websocket: WebSocket):
     playback_index = 0
     playback_cond = asyncio.Condition()
     audio_buffer = {} # {index: mulaw_bytes}
-    streamer_reset_event = asyncio.Event()
+    audio_ready_event = asyncio.Event()
 
     async def audio_sender_loop():
         """Central task to stream audio packets at a constant rate."""
@@ -124,14 +124,11 @@ async def plivo_stream(websocket: WebSocket):
                 while current_idx not in audio_buffer and not interrupt_event.is_set():
                     await asyncio.sleep(0.01)
                 
-                if interrupt_event.is_set() or streamer_reset_event.is_set():
-                    log.info(f"[STREAMER] Reset/Interrupt detected (Reset={streamer_reset_event.is_set()}). Resetting loop.")
-                    is_speaking = False
-                    # Wait for interrupt to clear
+                if interrupt_event.is_set():
+                    # Wait for interrupt to clear (managed by transcript_loop)
+                    # and reset our local index
                     while interrupt_event.is_set():
                         await asyncio.sleep(0.05)
-                    
-                    streamer_reset_event.clear()
                     current_idx = 0
                     continue
 
@@ -182,17 +179,15 @@ async def plivo_stream(websocket: WebSocket):
         prepared = prepare_for_tts(text)
         cache_key = get_tts_cache_key(prepared, voice_id, target_tts_lang)
 
-        # 🚀 LATENCY WIN: Adaptive steps for snappy first-bit
-        # Chunk 0 only needs 8 steps to be clear enough for 'hello/namaskar'
-        steps = 8 if index == 0 else 10
-
         audio = None
         if cache_key in TTS_CACHE:
             audio = TTS_CACHE[cache_key]
             log.info(f"[SPEAK] Cache HIT: {text[:40]} | Bytes: {len(audio)}")
         else:
-            log.info(f"[SPEAK] Generating TTS ({steps} steps): {text[:40]}")
-            audio = await omnivoice_tts(text, voice_id=voice_id, language=target_tts_lang, num_inference_steps=steps)
+            log.info(f"[SPEAK] Generating TTS: {text[:40]}")
+            # Use stream_tts_to_plivo but captured to bytes
+            # We don't want it to stream internally anymore, just return full audio
+            audio = await omnivoice_tts(text, voice_id=voice_id, language=target_tts_lang)
 
         if audio:
             # 🚀 Push to central streamer
@@ -208,7 +203,6 @@ async def plivo_stream(websocket: WebSocket):
         # 🚀 RESET SEQUENCE: Cleanup buffer for new round
         audio_buffer.clear()
         interrupt_event.clear()
-        streamer_reset_event.set()
             
         full_text = ""
         last_metadata = None

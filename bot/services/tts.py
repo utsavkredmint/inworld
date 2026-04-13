@@ -1,7 +1,6 @@
 import asyncio
 import audioop
 import base64
-from concurrent.futures import ThreadPoolExecutor
 import io
 import json
 import logging
@@ -35,8 +34,6 @@ _model = None
 _model_lock = asyncio.Lock()
 _resampler = None # 🚀 LATENCY WIN: Pre-instantiated resampler
 _resampler_lock = asyncio.Lock()
-_TRIMMED_VOICE_CACHE = {} # 🚀 LATENCY WIN: Cache trimmed voice paths
-_tts_executor = ThreadPoolExecutor(max_workers=1) # 🚀 LATENCY WIN: Serial execution
 
 # Reference audio and text defaults
 DEFAULT_REF_AUDIO_NAME = os.getenv("DEFAULT_REF_AUDIO_NAME", "default_ref.mp3")
@@ -75,14 +72,9 @@ async def init_tts():
             # Pre-cache fillers and a common greeting
             fillers = ["नमस्ते", "जी", "जी बताइए", "जी देख रही हूँ"]
             for f in fillers:
-                audio = await omnivoice_tts(f, num_inference_steps=10)
+                audio = await omnivoice_tts(f, num_inference_steps=12)
                 if audio:
                     update_tts_cache(f, audio)
-            
-            # 🚀 LATENCY WIN: Warm up CUDA kernels with a dummy 1-word generation
-            # This ensures the FIRST live response doesn't have a 1.6s jitter
-            log.info("[TTS] Performing dummy synthesis warmup...")
-            await omnivoice_tts("चेक")
                     
             log.info(f"[TTS] Warmup successful. {len(fillers)} items cached.")
         except Exception as e:
@@ -113,14 +105,13 @@ async def _get_model():
                 device_map=device,
                 torch_dtype=dtype
             )
-            # 🚀 LATENCY WIN: DISABLE torch.compile for now. 
-            # It can cause 1-2s latency spikes on every new text shape/length.
-            # try:
-            #     if hasattr(torch, "compile"):
-            #         log.info("[TTS] Compiling model for faster inference...")
-            #         _model = torch.compile(_model)
-            # except Exception as e:
-            #     log.warning(f"[TTS] Model compilation skipped: {e}")
+            # 🚀 LATENCY WIN: Compile model for faster inference if supported
+            try:
+                if hasattr(torch, "compile"):
+                    log.info("[TTS] Compiling model for faster inference...")
+                    _model = torch.compile(_model)
+            except Exception as e:
+                log.warning(f"[TTS] Model compilation skipped: {e}")
                 
             log.info(f"[TTS] OmniVoice model loaded successfully on {device}")
             return _model
@@ -236,35 +227,34 @@ async def omnivoice_tts(text, voice_id=None, language="hindi", num_inference_ste
             ref_text = voice["ref_text"] or DEFAULT_REF_TEXT
 
     # Optimization: Automatically trim reference audio if it's too long
-    # Use a static cache for trimmed paths to avoid filesystem I/O on every call
-    global _TRIMMED_VOICE_CACHE
-    if '_TRIMMED_VOICE_CACHE' not in globals():
-        _TRIMMED_VOICE_CACHE = {}
-
-    if ref_audio not in _TRIMMED_VOICE_CACHE:
-        try:
-            from pydub import AudioSegment
-            trimmed_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "voices", "trimmed")
-            if not os.path.exists(trimmed_dir):
-                os.makedirs(trimmed_dir)
-                
-            base_name = os.path.basename(ref_audio)
-            trimmed_path = os.path.join(trimmed_dir, f"v2_t5_{base_name}")
+    # This is the biggest latency killer. 5s is plenty for quality.
+    # We ALSO trim the text proportionally to prevent 'mixing' or repetition.
+    try:
+        from pydub import AudioSegment
+        trimmed_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "voices", "trimmed")
+        if not os.path.exists(trimmed_dir):
+            os.makedirs(trimmed_dir)
             
-            if not os.path.exists(trimmed_path):
-                audio = AudioSegment.from_file(ref_audio)
-                if len(audio) > 8000: 
-                    log.info(f"[TTS] Trimming reference audio {base_name} to 8s.")
-                    trimmed = audio[:8000]
-                    trimmed.export(trimmed_path, format="wav")
-                else:
-                    trimmed_path = ref_audio
-            _TRIMMED_VOICE_CACHE[ref_audio] = trimmed_path
-        except Exception as e:
-            log.warning(f"[TTS] Could not align audio: {e}. Using original.")
-            _TRIMMED_VOICE_CACHE[ref_audio] = ref_audio
-    
-    ref_audio = _TRIMMED_VOICE_CACHE[ref_audio]
+        base_name = os.path.basename(ref_audio)
+        trimmed_path = os.path.join(trimmed_dir, f"v2_t5_{base_name}")
+        
+        if not os.path.exists(trimmed_path):
+            audio = AudioSegment.from_file(ref_audio)
+            original_duration_ms = len(audio)
+            
+            if original_duration_ms > 8000: # Increase to 8s for more 'cloning context'
+                log.info(f"[TTS] Trimming reference audio {base_name} to 8s to preserve native accent.")
+                trimmed = audio[:8000]
+                trimmed.export(trimmed_path, format="wav")
+                # We do NOT cut ref_text by ratio anymore, as it's unreliable.
+                # The model is smart enough to use what matches.
+                # However, we'll use a safer 'Full Sentence' heuristic if needed.
+            else:
+                trimmed_path = ref_audio
+        
+        ref_audio = trimmed_path
+    except Exception as e:
+        log.warning(f"[TTS] Could not align audio: {e}. Using original.")
 
     # 🛠️ Text Normalization for better Pronunciation
     # Normalize common Hinglish terms to Hindi script for smoother TTS flow
@@ -290,18 +280,15 @@ async def omnivoice_tts(text, voice_id=None, language="hindi", num_inference_ste
     
     start = time.time()
     try:
-        # 🚀 LATENCY WIN: Serialize GPU access. 
-        # Parallel generation causes CUDA contention (1.8s spikes). 
-        # Serial access ensures Chunk 0 finishes in ~600ms.
-        async with _model_lock:
-            loop = asyncio.get_event_loop()
-            audio_list = await loop.run_in_executor(_tts_executor, lambda: model.generate(
-                text=text,
-                ref_audio=ref_audio,
-                ref_text=ref_text,
-                language=language or "hindi",
-                num_inference_steps=num_inference_steps
-            ))
+        # OmniVoice generate is usually blocking, we run in executor
+        loop = asyncio.get_event_loop()
+        audio_list = await loop.run_in_executor(None, lambda: model.generate(
+            text=text,
+            ref_audio=ref_audio,
+            ref_text=ref_text,
+            language=language or "hindi",
+            num_inference_steps=num_inference_steps # Custom steps for speed/quality trade-off
+        ))
         
         if not audio_list or len(audio_list) == 0:
             return None
