@@ -111,7 +111,6 @@ async def plivo_stream(websocket: WebSocket):
     playback_cond = asyncio.Condition()
     audio_buffer = {} # {index: mulaw_bytes}
     audio_ready_event = asyncio.Event()
-    llm_task = None # 🚀 TRACKING: Currently active LLM thought
 
     async def audio_sender_loop():
         """Central task to stream audio packets at a constant rate."""
@@ -126,8 +125,8 @@ async def plivo_stream(websocket: WebSocket):
                     await asyncio.sleep(0.01)
                 
                 if interrupt_event.is_set():
-                    is_speaking = False # 🚀 UNLOCK transcript_loop
-                    # Wait for interrupt to clear (managed by _process_text)
+                    # Wait for interrupt to clear (managed by transcript_loop)
+                    # and reset our local index
                     while interrupt_event.is_set():
                         await asyncio.sleep(0.05)
                     current_idx = 0
@@ -293,20 +292,12 @@ async def plivo_stream(websocket: WebSocket):
                         try: await websocket.send_text(json.dumps({"event": "clearAudio", "streamSid": stream_sid}))
                         except: pass
                         audio_buffer.clear()
-                        # 🚀 REMOVED: while is_speaking wait (CAUSED DEADLOCK)
+                        
+                        while is_speaking: await asyncio.sleep(0.01)
                     else: continue
                 
                 log.info(f"[USER] {text}")
-                
-                # 🚀 CANCELLATION: Kill any existing "thought" before starting a new one
-                if llm_task and not llm_task.done():
-                    log.info("[STREAM] Cancelling previous LLM task for new input.")
-                    llm_task.cancel()
-                    try: await llm_task
-                    except asyncio.CancelledError: pass
-                
-                llm_task = asyncio.create_task(_process_text(text, target_lang=tts_language))
-                result = await llm_task
+                result = await _process_text(text, target_lang=tts_language)
                 if result == "TERMINATE": break
             except Exception: pass
 
