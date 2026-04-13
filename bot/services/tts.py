@@ -142,18 +142,10 @@ def resample_and_to_mulaw(audio_tensor, orig_sr=24000, target_sr=8000):
             # For strict safety in async, we'd need more, but here it's usually one generation at a time per session.
             _resampler = torchaudio.transforms.Resample(
                 orig_sr, target_sr, 
-                lowpass_filter_width=64, # 🚀 Improved Anti-Aliasing (Fixes metallic noise)
+                lowpass_filter_width=32, # 🚀 Faster than 64
                 resampling_method='sinc_interp_hann' 
             )
         audio = _resampler(audio)
-
-    # 🚀 Boundary Smoothing: Apply small 2ms fades to avoid clicks between chunks
-    fade_len = int(target_sr * 0.002) # 16 samples @ 8kHz
-    if audio.shape[0] > fade_len * 2:
-        fade_in = torch.linspace(0.0, 1.0, steps=fade_len)
-        fade_out = torch.linspace(1.0, 0.0, steps=fade_len)
-        audio[:fade_len] *= fade_in
-        audio[-fade_len:] *= fade_out
     
     # 4. Add subtle dithering to prevent Mu-law quantization noise (hiss)
     dither = (torch.rand_like(audio) - 0.5) / 32768.0
@@ -335,8 +327,8 @@ async def stream_tts_to_plivo(text, tts_ctx, plivo_ws, voice_id=None, language="
     
     # Start all generations concurrently
     async def get_audio(index, sentence):
-        # 🚀 QUALITY WIN: Minimum 10 steps for clarity
-        steps = 10 if index == 0 else 12 
+        # 🔥 ULTRA LATENCY OPTIMIZATION: Use even fewer steps (8) for the FIRST sentence
+        steps = 8 if index == 0 else 10 # 🚀 8 steps is enough for 'first byte'
         key = get_tts_cache_key(sentence, voice_id, language)
         if key in TTS_CACHE:
             return TTS_CACHE[key]
