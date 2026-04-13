@@ -69,7 +69,7 @@ If user says:
 """
 
 
-async def get_agent_response_stream(
+async def get_agent_response(
     state,
     last_bot_msg,
     history,
@@ -77,30 +77,50 @@ async def get_agent_response_stream(
     call_data,
     current_stock,
     system_prompt_override=None,
-    is_generic=False
+    is_generic=False # New flag to bypass inventory logic
 ):
-    """
-    Streaming version of get_agent_response.
-    Yields: (sentence_text, is_final, data_dict)
-    """
     hist_str = ""
     for h in history[-5:]:
         role = "Bot" if h["role"] == "assistant" else "User"
         hist_str += f"{role}: {h['content']}\n"
 
-    user_msg = user_text
-    
-    # 2. Get prompt
-    prompt = system_prompt_override if system_prompt_override else build_agent_prompt(call_data)
-    if not is_generic:
-        prompt += "\n*** CRITICAL RUNTIME RULES:\n1. NEVER repeat last bot message.\n2. NEVER ask same SKU again.\n3. If all SKUs filled → terminate true.\n4. If user exit intent → terminate true.\n"
-    else:
-        prompt += "\n*** RUNTIME RULES:\n1. Follow the OBJECTIVE strictly.\n2. Keep responses natural.\n3. If user wants to end → set \"terminate\": true.\n"
-    
-    prompt += '\n*** FORMAT: JSON ONLY\n{"response": "reply", "state": "current_state", "terminate": false, "stock": {}}\n'
+    user_msg = (
+        f"CURRENT_STATE: {state}\n"
+        f"CURRENT_STOCK: {json.dumps(current_stock)}\n"
+        f"LAST_BOT_MESSAGE: {last_bot_msg}\n"
+        f"HISTORY:\n{hist_str}"
+        f"USER_SAID: {user_text}"
+    )
+
+    raw = ""
 
     try:
-        stream = await groq_client.chat.completions.create(
+        prompt = system_prompt_override if system_prompt_override else build_agent_prompt(call_data)
+
+        if not is_generic:
+            # 🔥 INVENTORY SPECIFIC RULES
+            prompt += """
+*** CRITICAL RUNTIME RULES:
+1. NEVER repeat last bot message.
+2. NEVER ask same SKU again.
+3. If all SKUs filled → terminate true.
+4. If user exit intent → terminate true.
+"""
+        else:
+            # 🔥 GENERIC AGENT RULES (Optimized for Kia/Sales)
+            prompt += """
+*** RUNTIME RULES:
+1. Follow the OBJECTIVE strictly.
+2. Keep responses natural and conversational.
+3. If user wants to end → set "terminate": true.
+4. Extract provided information (date, time, KM) and store it in your internal state.
+5. ANTI-HALLUCINATION: If user input is very short (1-2 words) or ambiguous (e.g., "I", "But", "Wait"), DO NOT jump to the next step. Instead, acknowledge and wait for them to finish their sentence.
+"""
+
+        # ALWAYS required for either type
+        prompt += '\n*** FORMAT: JSON ONLY\n{"response": "reply", "state": "current_state", "terminate": false, "stock": {}}\n'
+
+        comp = await groq_client.chat.completions.create(
             model="llama-3.1-8b-instant",
             messages=[
                 {"role": "system", "content": prompt},
@@ -108,80 +128,65 @@ async def get_agent_response_stream(
             ],
             max_tokens=250,
             temperature=0,
-            stream=True,
-            response_format={"type": "json_object"} # Re-enforce JSON mode
+            stream=False,
+            response_format={"type": "json_object"}
         )
 
-        full_content = ""
-        sent_sentences = set()
-        import re
-        
-        async for chunk in stream:
-            content = chunk.choices[0].delta.content
-            if not content:
-                continue
-            full_content += content
-            
-            # --- Robust Streaming Extraction ---
-            # Try to extract the "response" field if it exists
-            match = re.search(r'"response":\s*"([^"]*)', full_content)
-            extracted_text = ""
-            if match:
-                extracted_text = match.group(1)
-            elif not full_content.strip().startswith("{"):
-                # Fallback: If LLM is not outputting JSON at all, treat whole thing as text
-                extracted_text = full_content.strip()
+        raw = comp.choices[0].message.content.strip()
 
-            if extracted_text:
-                # Split and yield sentences as they complete
-                sentences = re.split(r'([।\.?!\n])', extracted_text)
-                for i in range(0, len(sentences)-1, 2):
-                    s = (sentences[i] + sentences[i+1]).strip()
-                    # Only yield if sentence contains actual words (prevent TTS crashes on dots)
-                    if s and s not in sent_sentences and re.search(r'[\w\u0900-\u097F]', s):
-                        # Clean special characters out of the sentence before yielding
-                        s = re.sub(r'["\-_*]', ' ', s).strip()
-                        if s:
-                            yield (s, False, None)
-                            sent_sentences.add(s)
-
-        # --- Final Cleanup ---
-        raw = full_content.strip()
+        # साफ JSON parsing
         if raw.startswith("```"):
             raw = raw.split("```")[1]
-            if raw.startswith("json"): raw = raw[4:]
-            # Filter out text that is only punctuation or empty to prevent TTS crashes
-            clean = re.sub(r'[^\w\s]', '', raw).strip()
-            if not clean or len(clean) == 0:
-                raw = "{}"
-        
-        try:
-            data = json.loads(raw)
-            resp = data.get("response", "")
-            for s in re.split(r'(?<=[।\.?!\n])', resp):
-                s = s.strip()
-                if s and s not in sent_sentences:
-                    yield (s, False, None)
-                    sent_sentences.add(s)
+            if raw.startswith("json"):
+                raw = raw[4:]
+            raw = raw.strip()
+
+        data = json.loads(raw)
+
+        response = data.get("response", "")
+        next_state = data.get("state", state)
+        terminate = data.get("terminate", False)
+        stock = data.get("stock", {})
+
+        # 🚨 HARD GUARD 1: prevent repetition loop
+        if response.strip() == last_bot_msg.strip():
+            log.warning("Repeat detected → forcing termination")
+            return ("धन्यवाद, आपका दिन शुभ हो।", state, True, current_stock)
+
+        # 🚨 HARD GUARD 2: user exit detection (code level)
+        exit_keywords = ["busy", "baad", "बाद", "फोन काट", "मत कॉल", "नहीं बात"]
+        if any(k in user_text.lower() for k in exit_keywords):
+            return ("ठीक है, धन्यवाद!", state, True, current_stock)
+
+        # 🚨 HARD GUARD 3: prevent asking already filled SKU
+        for sku, val in current_stock.items():
+            if val is not None and sku in response:
+                log.warning("Asking already filled SKU → fixing")
+                return ("धन्यवाद, आपका दिन शुभ हो।", state, True, current_stock)
+
+        # merge stock safely (Only for inventory agents)
+        if not is_generic:
+            updated_stock = current_stock.copy()
+            expected_skus = call_data.get("skus", [])
+            for sku in expected_skus:
+                if sku not in updated_stock:
+                    updated_stock[sku] = None
+
+            for k, v in stock.items():
+                if updated_stock.get(k) is None:
+                    updated_stock[k] = v
+
+            # 🚨 AUTO CLOSE: only for inventory bots
+            if expected_skus and all(updated_stock.get(sku) is not None for sku in expected_skus):
+                return ("धन्यवाद, आपका दिन शुभ हो।", state, True, updated_stock)
             
-            yield (None, True, data)
-        except:
-            log.error(f"[LLM] Final JSON parse failed: {raw}")
-            yield (None, True, {"response": "जी, समझ नहीं आया।", "state": state, "terminate": False})
+            return (response, next_state, terminate, updated_stock)
+        
+        # For Generic Agents, just return the raw response
+        return (response, next_state, terminate, {})
 
     except Exception as e:
-        log.error(f"[LLM] Stream error: {e}")
-        yield ("जी, समझ नहीं आया।", True, {"response": "error", "state": state, "terminate": False})
+        log.error(f"LLM error: {e} | raw: {raw if raw else 'None'}")
 
-async def get_agent_response(
-    state, last_bot_msg, history, user_text, call_data, current_stock,
-    system_prompt_override=None, is_generic=False
-):
-    """Fallback legacy wrapper for non-streaming usage."""
-    async for text, is_final, data in get_agent_response_stream(
-        state, last_bot_msg, history, user_text, call_data, current_stock,
-        system_prompt_override, is_generic
-    ):
-        if is_final:
-            return data.get("response", ""), data.get("state", state), data.get("terminate", False), data.get("stock", {})
-    return "जी, समझ नहीं आया।", state, False, {}
+        # fallback safe response - DON'T terminate on single error
+        return ("जी, समझ नहीं आया। क्या आप फिर से बता सकते हैं?", state, False, current_stock)

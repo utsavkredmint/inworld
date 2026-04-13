@@ -80,23 +80,10 @@ def resample_and_to_mulaw(audio_tensor, orig_sr=24000, target_sr=8000):
     if audio.dim() > 1:
         audio = audio.squeeze(0)
     
-    # 🛡️ NORMALIZATION & SAFETY (Added to fix 'unclear' words)
-    # Ensure range is [-1, 1] to prevent clipping distortion
-    audio = torch.clamp(audio, -1.0, 1.0)
-    
-    # Peak Normalization: Bring it to a standard volume level for PSTN
-    abs_max = torch.max(torch.abs(audio))
-    if abs_max > 0.01:
-        audio = (audio / abs_max) * 0.9  # Normalize to 90% peak
-    
     # 2. Resample using torchaudio
     if orig_sr != target_sr:
-        # High-quality resampling for 8kHz
         resampler = torchaudio.transforms.Resample(orig_sr, target_sr)
         audio = resampler(audio)
-    
-    # Final safety clamp after resampling
-    audio = torch.clamp(audio, -1.0, 1.0)
     
     # 3. Convert to PCM 16-bit
     pcm16 = (audio * 32767).to(torch.int16).numpy().tobytes()
@@ -139,17 +126,8 @@ def _resolve_audio_path(path):
     
     return path
 
-async def omnivoice_tts(text, voice_id=None, language=None):
-    """
-    Directly generates audio byte buffer using OmniVoice model.
-    """
-    # Safety: If text is empty or just dots/punctuation, skip TTS generation
-    import re
-    clean_text = re.sub(r'[^\w\s\u0900-\u097F]', '', text).strip()
-    if not clean_text:
-        log.warning(f"[TTS] Skipping empty/punctuation-only text: '{text}'")
-        return None
-
+async def omnivoice_tts(text, voice_id=None, language="hindi"):
+    """Generate audio using OmniVoice."""
     model = await _get_model()
     if not model:
         log.error("[TTS] Model not loaded.")
@@ -168,7 +146,8 @@ async def omnivoice_tts(text, voice_id=None, language=None):
             ref_text = voice["ref_text"] or DEFAULT_REF_TEXT
 
     # Optimization: Automatically trim reference audio if it's too long
-    # We ALSO trim the text proportionally to prevent 'mixing' or repetition (CRITICAL)
+    # This is the biggest latency killer. 5s is plenty for quality.
+    # We ALSO trim the text proportionally to prevent 'mixing' or repetition.
     try:
         from pydub import AudioSegment
         trimmed_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "voices", "trimmed")
@@ -176,33 +155,21 @@ async def omnivoice_tts(text, voice_id=None, language=None):
             os.makedirs(trimmed_dir)
             
         base_name = os.path.basename(ref_audio)
-        # Increase trim to 10s for better speaker character capture
-        trimmed_path = os.path.join(trimmed_dir, f"v2_t10_{base_name}")
+        trimmed_path = os.path.join(trimmed_dir, f"v2_t5_{base_name}")
         
         if not os.path.exists(trimmed_path):
             audio = AudioSegment.from_file(ref_audio)
             original_duration_ms = len(audio)
             
-            if original_duration_ms > 10000:
-                log.info(f"[TTS] Trimming reference audio {base_name} to 10s.")
-                trimmed = audio[:10000]
+            if original_duration_ms > 8000: # Increase to 8s for more 'cloning context'
+                log.info(f"[TTS] Trimming reference audio {base_name} to 8s to preserve native accent.")
+                trimmed = audio[:8000]
                 trimmed.export(trimmed_path, format="wav")
-                
-                # Align ref_text: Only use first ~30 words to match 10s audio
-                # This prevents OmniVoice from trying to 'fit' 1 min text into 10s audio
-                words = ref_text.split()
-                if len(words) > 30:
-                    ref_text = " ".join(words[:30])
-                    log.info(f"[TTS] Trimmed ref_text to first 30 words for alignment.")
+                # We do NOT cut ref_text by ratio anymore, as it's unreliable.
+                # The model is smart enough to use what matches.
+                # However, we'll use a safer 'Full Sentence' heuristic if needed.
             else:
                 trimmed_path = ref_audio
-        else:
-            # If path exists, we still need to align the text logic for this run
-            # To be safe, if we are using a trimmed file, we trim the text too
-            if "v2_t10_" in os.path.basename(trimmed_path):
-                words = ref_text.split()
-                if len(words) > 30:
-                    ref_text = " ".join(words[:30])
         
         ref_audio = trimmed_path
     except Exception as e:
@@ -239,7 +206,7 @@ async def omnivoice_tts(text, voice_id=None, language=None):
             ref_audio=ref_audio,
             ref_text=ref_text,
             language=language or "hindi",
-            num_inference_steps=15 # Extremely low for near-instant response
+            num_inference_steps=35 # Increased for better pronunciation clarity
         ))
         
         if not audio_list or len(audio_list) == 0:
@@ -260,7 +227,7 @@ class TTSContext:
     async def open(self): return True
     async def close(self): pass
 
-async def stream_tts_to_plivo(text, tts_ctx, plivo_ws, voice_id=None, language="hindi", stream_sid=None):
+async def stream_tts_to_plivo(text, tts_ctx, plivo_ws, voice_id=None, language="hindi"):
     """
     Real Streaming: splits text into sentences and plays each as soon as its audio is ready.
     This drastically reduces 'Time to First Word' latency.
@@ -304,29 +271,24 @@ async def stream_tts_to_plivo(text, tts_ctx, plivo_ws, voice_id=None, language="
 
         total_mulaw += mulaw
 
-        # Send in stable chunks to Plivo
-        # 160 bytes of mu-law = 20ms of audio at 8kHz
-        chunk_size = 160 
+        # Send in small chunks to Plivo
+        chunk_size = 320 # 20ms
         for i in range(0, len(mulaw), chunk_size):
             chunk = mulaw[i:i+chunk_size]
             try:
-                msg = {
+                await plivo_ws.send_text(json.dumps({
                     "event": "playAudio",
                     "media": {
                         "contentType": "audio/x-mulaw",
                         "sampleRate": "8000",
                         "payload": base64.b64encode(chunk).decode()
                     }
-                }
-                if stream_sid:
-                    msg["streamSid"] = stream_sid
-                await plivo_ws.send_text(json.dumps(msg))
+                }))
             except:
                 break
             
-            # Paced sending: Wait slightly less than real-time to keep buffer healthy
-            # 20ms chunk -> wait 17ms
-            await asyncio.sleep(0.017) 
+            # Very small sleep to prevent Plivo overflow
+            await asyncio.sleep(0.002) 
 
     return total_mulaw
 

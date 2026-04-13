@@ -96,22 +96,12 @@ async def test_voice(voice_id: str, text: Optional[str] = None, language: Option
 
     try:
         log.info(f"[VOICES] Generating test clip for {voice_id} in {language}...")
-        
-        # Consistent Reference Alignment with tts.py
-        ref_audio_orig = _resolve_audio_path(voice["ref_audio_path"])
-        ref_text_orig = voice["ref_text"] or DEFAULT_REF_TEXT
-        
-        # Simple heuristic to match tts.py's 10s trim for testing consistency
-        # In a real scenario, we'd use the same trimmed file logic, 
-        # but here we'll just ensure the model parameters are high quality.
-        
         loop = asyncio.get_event_loop()
         audio_list = await loop.run_in_executor(None, lambda: model.generate(
             text=sample_text,
-            ref_audio=ref_audio_orig,
-            ref_text=ref_text_orig,
-            language=language or "hindi",
-            num_inference_steps=45 # Increased for high quality preview
+            ref_audio=ref_audio,
+            ref_text=ref_text,
+            language=language or "hindi"
         ))
         
         if not audio_list or len(audio_list) == 0:
