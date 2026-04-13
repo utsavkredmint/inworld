@@ -14,15 +14,18 @@ DG_URL = (
     "&model=nova-3"
     "&language=hi"
     "&interim_results=true"
-    "&endpointing=1200"
+    "&endpointing=300" # 🚀 REDUCED from 1200ms for fast turnover
+    "&utterance_end_ms=1000"
     "&smart_format=false"
     "&punctuate=false"
+    "&no_delay=true"
 )
 
 _dg_ws = None
 _dg_session = None
 _dg_lock = asyncio.Lock()
 _transcript_queue = None
+_interim_queue = None # 🚀 NEW: Queue for real-time triggers
 _dg_reader_task = None
 
 
@@ -38,6 +41,7 @@ async def connect():
             _dg_session = aiohttp.ClientSession()
 
         _transcript_queue = asyncio.Queue()
+        _interim_queue = asyncio.Queue() # 🚀 Initialize interim queue
 
         _dg_ws = await _dg_session.ws_connect(
             DG_URL,
@@ -81,10 +85,23 @@ async def _dg_reader():
                     is_final = data.get("is_final", False)
                     speech_final = data.get("speech_final", False)
 
-                    if is_final and transcript:
-                        log.info(f"[STT] Final: '{transcript}' (speech_final={speech_final})")
-                        if _transcript_queue:
-                            await _transcript_queue.put(("final", transcript, speech_final))
+                    if transcript:
+                        message_type = "final" if is_final else "interim"
+                        if message_type == "interim":
+                            # We only care about interims if they have content
+                            if transcript.strip():
+                                if _transcript_queue:
+                                    await _transcript_queue.put(("interim", transcript, False))
+                                if _interim_queue:
+                                    # 🚀 Push to interim-specific queue
+                                    await _interim_queue.put(transcript)
+                        elif is_final:
+                            log.info(f"[STT] Final: '{transcript}' (speech_final={speech_final})")
+                            if _transcript_queue:
+                                await _transcript_queue.put(("final", transcript, speech_final))
+                            if _interim_queue:
+                                # 🚀 Mark end of interim sequence for this utterance
+                                await _interim_queue.put(None)
 
                 elif msg_type == "UtteranceEnd":
                     log.info("[STT] UtteranceEnd detected")
