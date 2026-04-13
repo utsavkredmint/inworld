@@ -82,8 +82,10 @@ async def plivo_stream(websocket: WebSocket):
                 update_call(call_id, status="in-progress", started_at=datetime.utcnow().isoformat() + "Z")
                 try:
                     from config import SERVER_URL
-                    plivo_client.calls.record(call_uuid=call_uuid, file_format="mp3", time_limit=3600,
-                        callback_url=f"{SERVER_URL}/api/plivo/record_callback?call_id={call_id}")
+                    # 🚀 Background record - fire and forget
+                    asyncio.create_task(asyncio.to_thread(plivo_client.calls.record, 
+                        call_uuid=call_uuid, file_format="mp3", time_limit=3600,
+                        callback_url=f"{SERVER_URL}/api/plivo/record_callback?call_id={call_id}"))
                 except Exception: pass
 
     if user_name:
@@ -207,7 +209,8 @@ async def plivo_stream(websocket: WebSocket):
         last_metadata = None
         
         # Log to DB/History
-        if call_id: add_message(call_id, "user", text)
+        # 🚀 ASYNC DB Update: Don't block the conversation
+        if call_id: asyncio.create_task(asyncio.to_thread(add_message, call_id, "user", text))
         history.append({"role": "user", "content": text})
 
         chunk_idx = 0
@@ -227,7 +230,7 @@ async def plivo_stream(websocket: WebSocket):
             last_bot_response = llm_text
             if stock: last_stock.update(stock)
             history.append({"role": "assistant", "content": llm_text})
-            if call_id: add_message(call_id, "assistant", llm_text)
+            if call_id: asyncio.create_task(asyncio.to_thread(add_message, call_id, "assistant", llm_text))
             
             if terminate_call:
                 await asyncio.sleep(1.5)
@@ -251,11 +254,10 @@ async def plivo_stream(websocket: WebSocket):
         await speak(greeting, index=0)
         is_initial_greeting = False
         
-        # 🚀 Fix: Add greeting to history so LLM knows context
         history.append({"role": "assistant", "content": greeting})
         nonlocal last_bot_response
         last_bot_response = greeting
-        if call_id: add_message(call_id, "assistant", greeting)
+        if call_id: asyncio.create_task(asyncio.to_thread(add_message, call_id, "assistant", greeting))
 
     asyncio.create_task(_init_and_greet())
 
@@ -305,8 +307,10 @@ async def plivo_stream(websocket: WebSocket):
     except: pass
     
     if call_id:
-        update_call(call_id, status="completed", ended_at=datetime.utcnow().isoformat()+"Z",
-                   duration_sec=int(time.time()-start_connect), metadata=json.dumps({"stock":last_stock}))
+        asyncio.create_task(asyncio.to_thread(update_call, call_id, status="completed", 
+                   ended_at=datetime.utcnow().isoformat()+"Z",
+                   duration_sec=int(time.time()-start_connect), 
+                   metadata=json.dumps({"stock":last_stock})))
     
     await stt_disconnect()
     try:

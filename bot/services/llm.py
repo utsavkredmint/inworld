@@ -9,6 +9,7 @@ groq_client = AsyncGroq(api_key=GROQ_API_KEY)
 # Default fallback prompt if an agent has NO custom prompt in DB
 DEFAULT_SYSTEM_PROMPT = """You are a helpful Hindi voice assistant.
 Rules: Hindi only. < 15 words. Natural flow.
+Do NOT restart greetings if the user says "Hello" mid-conversation; acknowledge and continue.
 If ending, set terminate: true."""
 
 
@@ -74,11 +75,11 @@ async def get_agent_response(
                 
                 new_text = text_so_far[yielded_index:]
                 
-                # 🚀 LATENCY WIN: Yield FIRST chunk (3 words) to provide enough audio for the next one to ready
+                # 🚀 CONTINUITY WIN: Yield FIRST chunk (6 words) to ensure playback is long enough to hide NEXT chunk synthesis
                 words = new_text.strip().split()
-                if yielded_index == 0 and len(words) >= 3:
-                     # If we have 3 words, yield them to start synthesis
-                     chunk_to_yield = " ".join(words[:3])
+                if yielded_index == 0 and len(words) >= 6:
+                     # If we have 6 words, yield them to start synthesis
+                     chunk_to_yield = " ".join(words[:6])
                      if any('\u0900'<=c<='\u097f' or 'a'<=c.lower()<='z' for c in chunk_to_yield):
                          yield (chunk_to_yield + " ", False, None)
                      yielded_index += len(chunk_to_yield) + 1
