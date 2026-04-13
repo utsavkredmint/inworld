@@ -128,21 +128,38 @@ async def plivo_stream(websocket: WebSocket):
         target_tts_lang = language or tts_language
         prepared = prepare_for_tts(text)
         cache_key = get_tts_cache_key(prepared, voice_id, target_tts_lang)
-
+        
+        audio = None
         if cache_key in TTS_CACHE:
             audio = TTS_CACHE[cache_key]
             log.info(f"[SPEAK] Cache HIT: {text[:40]} | Bytes: {len(audio)}")
-            
-            # 🚀 SEQUENCE SYNC: Wait for our turn to play
-            async with playback_cond:
-                log.info(f"[SPEAK] Chunk {index} waiting for turn (Current: {playback_index})")
-                while playback_index < index and not interrupt_event.is_set():
-                    await playback_cond.wait()
-                if interrupt_event.is_set() and index >= playback_index:
-                    log.info(f"[SPEAK] Chunk {index} cancelled by interrupt")
-                    return
+        else:
+            log.info(f"[SPEAK] Generating TTS: {text[:40]}")
+            # 🚀 PARALLEL SYNTHESIS: Start GPU work immediately without waiting for our turn to play
+            audio = await omnivoice_tts(text, voice_id=voice_id, language=target_tts_lang)
+            if audio:
+                update_tts_cache(text, audio, voice_id=voice_id, language=target_tts_lang)
 
-            # 🚀 CHUNKING: Send cached audio in small parts to prevent Plivo overflow
+        if not audio:
+            log.warning(f"[SPEAK] No audio generated for: {text[:40]}")
+            is_speaking = False
+            # Still need to increment index to not block the chain
+            async with playback_cond:
+                playback_index += 1
+                playback_cond.notify_all()
+            return
+
+        # 🚀 SEQUENCE SYNC: Wait for our turn to play
+        async with playback_cond:
+            log.info(f"[SPEAK] Chunk {index} ready. Waiting for turn (Current: {playback_index})")
+            while playback_index < index and not interrupt_event.is_set():
+                await playback_cond.wait()
+            
+            if interrupt_event.is_set() and index >= playback_index:
+                log.info(f"[SPEAK] Chunk {index} cancelled by interrupt")
+                return
+
+            # 🚀 CHUNKING: Send audio in small parts to prevent Plivo overflow
             chunk_size = 320 # 40ms
             try:
                 for i in range(0, len(audio), chunk_size):
@@ -158,40 +175,9 @@ async def plivo_stream(websocket: WebSocket):
                         "streamSid": stream_sid
                     }
                     await websocket.send_text(json.dumps(msg))
-                    # Buffer management: sleep 0.04s to match real-time better
-                    await asyncio.sleep(0.04)
+                    await asyncio.sleep(0.04) # 40ms buffer sleep
             except Exception as e:
                 log.error(f"[STREAM] WS Send Error: {e}")
-        else:
-            log.info(f"[SPEAK] Streaming TTS: {text[:40]}")
-            # Note: stream_tts_to_plivo handles its own internal chunking/sending
-            # We wrap it in the sequence wait
-            async with playback_cond:
-                log.info(f"[SPEAK] Chunk {index} waiting for turn (Current: {playback_index})")
-                while playback_index < index and not interrupt_event.is_set():
-                    await playback_cond.wait()
-                if interrupt_event.is_set() and index >= playback_index:
-                    return
-
-            audio = await stream_tts_to_plivo(text, TTSContext(), websocket, voice_id=voice_id, language=target_tts_lang, stream_sid=stream_sid)
-            if not audio:
-                log.info(f"[SPEAK] Fallback TTS: {text[:40]}")
-                audio = await omnivoice_tts(text, voice_id=voice_id, language=target_tts_lang)
-                if audio:
-                    msg = {
-                        "event": "playAudio",
-                        "media": {
-                            "payload": base64.b64encode(audio).decode(),
-                            "contentType": "audio/x-mulaw",
-                            "sampleRate": 8000
-                        },
-                        "streamSid": stream_sid
-                    }
-                    await websocket.send_text(json.dumps(msg))
-
-        if not audio:
-            is_speaking = False
-            return
 
         # Wait for actual playback to finish (heuristic)
         duration = len(audio) / 8000
