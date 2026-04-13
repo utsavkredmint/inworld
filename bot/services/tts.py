@@ -245,51 +245,50 @@ class TTSContext:
 async def stream_tts_to_plivo(text, tts_ctx, plivo_ws, voice_id=None, language="hindi"):
     """
     Real Streaming: splits text into sentences and plays each as soon as its audio is ready.
-    This drastically reduces 'Time to First Word' latency.
+    Generates all chunks concurrently to minimize playback gaps.
     """
-    # 1. Split text into sentences (Hindi and English punctuation)
-    # We split by '।', '.', '?', '!'
     import re
-    sentences = re.split(r'([।\.?!\n])', text)
+    sentences = [s.strip() for s in re.split(r'([।\.?!\n])', text) if s.strip()]
     
-    # Re-combine the markers into the sentences
-    final_sentences = []
+    # Re-combine punctuation
+    final_chunks = []
     current = ""
     for s in sentences:
         if s in ["।", ".", "?", "!", "\n"]:
-            current += s
-            if current.strip(): final_sentences.append(current.strip())
-            current = ""
+            if final_chunks: final_chunks[-1] += s
+            else: current += s
         else:
-            current += s
-    if current.strip(): final_sentences.append(current.strip())
-
-    if not final_sentences:
+            if current: final_chunks.append(current + s)
+            else: final_chunks.append(s)
+            current = ""
+            
+    if not final_chunks:
         return None
 
-    log.info(f"[STREAM] Processing {len(final_sentences)} chunks for ultra-low latency.")
+    log.info(f"[STREAM] Parallel processing {len(final_chunks)} chunks.")
+    
+    # Start all generations concurrently
+    async def get_audio(sentence):
+        key = get_tts_cache_key(sentence, voice_id, language)
+        if key in TTS_CACHE:
+            return TTS_CACHE[key]
+        audio = await omnivoice_tts(sentence, voice_id, language)
+        if audio: TTS_CACHE[key] = audio
+        return audio
+
+    audio_tasks = [get_audio(s) for s in final_chunks]
     total_mulaw = b""
 
-    for sentence in final_sentences:
-        # Check cache first
-        cache_key = f"{sentence}_{voice_id}_{language}"
-        if cache_key in TTS_CACHE:
-            mulaw = TTS_CACHE[cache_key]
-            log.info(f"[STREAM] Cache HIT for chunk: {sentence[:30]}...")
-        else:
-            mulaw = await omnivoice_tts(sentence, voice_id, language)
-            if mulaw:
-                TTS_CACHE[cache_key] = mulaw
-
-        if not mulaw:
-            continue
-
+    # Stream in order
+    for i, task in enumerate(audio_tasks):
+        mulaw = await task
+        if not mulaw: continue
         total_mulaw += mulaw
 
         # Send in small chunks to Plivo
         chunk_size = 320 # 20ms
-        for i in range(0, len(mulaw), chunk_size):
-            chunk = mulaw[i:i+chunk_size]
+        for j in range(0, len(mulaw), chunk_size):
+            chunk = mulaw[j:j+chunk_size]
             try:
                 await plivo_ws.send_text(json.dumps({
                     "event": "playAudio",
@@ -301,7 +300,6 @@ async def stream_tts_to_plivo(text, tts_ctx, plivo_ws, voice_id=None, language="
                 }))
             except:
                 break
-            
             # Very small sleep to prevent Plivo overflow
             await asyncio.sleep(0.002) 
 
@@ -314,3 +312,14 @@ async def pre_connect():
 def prepare_for_tts(text):
     """Legacy helper for text cleaning."""
     return text.strip()
+
+def get_tts_cache_key(text, voice_id=None, language="hindi"):
+    """Helper to generate a consistent cache key."""
+    prepared = prepare_for_tts(text)
+    return f"{prepared}_{voice_id}_{language}"
+
+def update_tts_cache(text, audio, voice_id=None, language="hindi"):
+    """Manually update the TTS cache with audio data."""
+    key = get_tts_cache_key(text, voice_id, language)
+    TTS_CACHE[key] = audio
+    log.info(f"[TTS] Manually updated cache for key: {key[:50]}...")
