@@ -125,8 +125,9 @@ async def plivo_stream(websocket: WebSocket):
                     await asyncio.sleep(0.01)
                 
                 if interrupt_event.is_set():
+                    log.info("[STREAMER] Interrupt detected. Resetting loop.")
+                    is_speaking = False
                     # Wait for interrupt to clear (managed by transcript_loop)
-                    # and reset our local index
                     while interrupt_event.is_set():
                         await asyncio.sleep(0.05)
                     current_idx = 0
