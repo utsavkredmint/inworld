@@ -204,33 +204,40 @@ async def plivo_stream(websocket: WebSocket):
         # 1. OPTIMIZATION: Wait for Plivo Link before doing ANYTHING
         await stream_ready.wait()
 
+        # Optimized Chunking & Pacing for Plivo (20ms = 160 bytes)
+        CHUNK_SIZE = 160 
+        
+        async def send_paced_audio(audio_data):
+            for i in range(0, len(audio_data), CHUNK_SIZE):
+                if interrupt_event.is_set():
+                    log.info("[SPEAK] Interrupted while sending chunks")
+                    break
+                
+                chunk = audio_data[i:i + CHUNK_SIZE]
+                try:
+                    msg = {
+                        "event": "media",
+                        "media": {"payload": base64.b64encode(chunk).decode()}
+                    }
+                    if stream_sid: msg["streamId"] = stream_sid
+                    await websocket.send_text(json.dumps(msg))
+                    # Wait 20ms to match the audio duration of the chunk
+                    await asyncio.sleep(0.018) # Slightly less than 20ms for network overhead
+                except Exception as e:
+                    log.error(f"[SPEAK] Chunk delivery failed: {e}")
+                    break
+
         # 2. CACHE HIT
         if cache_key in TTS_CACHE:
             audio = TTS_CACHE[cache_key]
             log.info(f"[SPEAK] Cache HIT for: {text[:40]}")
-            try:
-                msg = {
-                    "event": "media",
-                    "media": {"payload": base64.b64encode(audio).decode()}
-                }
-                if stream_sid: msg["streamId"] = stream_sid
-                await websocket.send_text(json.dumps(msg))
-            except Exception as e:
-                log.error(f"[SPEAK] Cache playback failed: {e}")
+            await send_paced_audio(audio)
         else:
             # 3. GENERATION
             log.info(f"[SPEAK] Streaming TTS for: {text[:40]}... (steps={steps})")
             audio = await omnivoice_tts(text, voice_id=voice_id, language=target_tts_lang, steps=steps)
             if audio:
-                try:
-                    msg = {
-                        "event": "media",
-                        "media": {"payload": base64.b64encode(audio).decode()}
-                    }
-                    if stream_sid: msg["streamId"] = stream_sid
-                    await websocket.send_text(json.dumps(msg))
-                except Exception as e:
-                    log.error(f"[SPEAK] Generated playback failed: {e}")
+                await send_paced_audio(audio)
 
         tts_ms = int((time.time() - tts_start) * 1000)
         if not audio:
