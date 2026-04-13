@@ -137,17 +137,19 @@ async def plivo_stream(websocket: WebSocket):
     agent_language = agent.get("language", "hindi") if agent else "hindi"
     voice_id = agent.get("voice") if agent else None
     
-    # 🔥 HOT LATENCY FIX: Start generating greeting TTS IMMEDIATELY
-    greeting_task = asyncio.create_task(omnivoice_tts(greeting, voice_id=voice_id, language=agent_language))
-
-    # Check for pre-setup session (STT + TTS already connected)
-    from call_sessions import get_session
-    pre_session = get_session(call_id) if call_id else None
-
     history = []
     is_speaking = False
     filler_cache = {}
     stream_sid = None
+    
+    # 🔗 Pick up pre-cached greeting and agent data
+    from call_sessions import get_session
+    pre_session = get_session(call_id) if call_id else None
+    
+    agent = pre_session["agent"] if pre_session else agent
+    greeting = agent.get("greeting", GREETING) if agent else GREETING
+    greeting_task = pre_session["greeting_task"] if pre_session else greeting_task
+    
     last_bot_response = greeting
     is_generic_agent = len(local_call_data.get("skus", [])) == 0
     call_state = INTRO
@@ -185,7 +187,7 @@ async def plivo_stream(websocket: WebSocket):
         except Exception as e:
             log.error(f"[FILLER] Injection failed: {e}")
 
-    async def speak(text, is_filler=False, language=None):
+    async def speak(text, is_filler=False, language=None, steps=35):
         nonlocal is_speaking, speak_start_ts
         tts_start = time.time()
         is_speaking = True
@@ -212,23 +214,20 @@ async def plivo_stream(websocket: WebSocket):
             except:
                 pass
         else:
-            log.info(f"[SPEAK] Streaming TTS for: {text[:40]}... (ctx_ready={tts_ctx.ready})")
+            log.info(f"[SPEAK] Streaming TTS for: {text[:40]}... (steps={steps})")
             # This streams directly to Plivo WebSocket internally!
-            audio = await stream_tts_to_plivo(text, tts_ctx, websocket, voice_id=voice_id, language=target_tts_lang)
-            # Fallback to omnivoice_tts if streaming didn't work
-            if not audio:
-                log.info(f"[SPEAK] Fallback to direct TTS for: {text[:40]}")
-                audio = await omnivoice_tts(text, voice_id=voice_id, language=target_tts_lang)
-                if audio:
-                    try:
-                        msg = {
-                            "event": "media",
-                            "media": {"payload": base64.b64encode(audio).decode()}
-                        }
-                        if stream_sid: msg["streamSid"] = stream_sid
-                        await websocket.send_text(json.dumps(msg))
-                    except:
-                        pass
+            # Modified stream_tts_to_plivo to support steps (coming soon) or fallback to omnivoice
+            audio = await omnivoice_tts(text, voice_id=voice_id, language=target_tts_lang, steps=steps)
+            if audio:
+                try:
+                    msg = {
+                        "event": "media",
+                        "media": {"payload": base64.b64encode(audio).decode()}
+                    }
+                    if stream_sid: msg["streamSid"] = stream_sid
+                    await websocket.send_text(json.dumps(msg))
+                except:
+                    pass
 
         tts_ms = int((time.time() - tts_start) * 1000)
         if not audio:
@@ -253,80 +252,63 @@ async def plivo_stream(websocket: WebSocket):
         vad.reset()
 
     async def _process_text(text, target_lang=None):
-        """Process a transcript: LLM → TTS → speak."""
+        """Process a transcript: LLM → TTS SENTENCE-BY-SENTENCE."""
         nonlocal call_state, last_bot_response, last_stock
 
-        start_proc = time.time()
+        if not target_lang:
+            target_lang = tts_language
 
-        # LLM
+        history.append({"role": "user", "content": text})
+        
+        # 🚀 STREAMING ENGINE: LLM → TTS SENTENCE BY SENTENCE
         llm_start = time.time()
-        full_resp, next_state, terminate_call, stock = await get_agent_response(
+        from services.llm import get_streaming_agent_response
+        
+        full_resp = ""
+        current_sentence_index = 0
+        
+        async for msg_type, content in get_streaming_agent_response(
             call_state, last_bot_response, history, text, local_call_data, last_stock,
             system_prompt_override=system_prompt_override,
             is_generic=is_generic_agent
-        )
-        if stock:
-            last_stock.update(stock)  # MERGE — never overwrite previous SKU values
-            log.info(f"[STOCK] {last_stock}")
-        llm_ms = int((time.time() - llm_start) * 1000)
+        ):
+            if msg_type == "sentence":
+                log.info(f"[STREAM-LLM] Sentence {current_sentence_index+1} ready: {content[:30]}...")
+                # Start TTS for this sentence immediately!
+                # Fast-Start: We use a lower step count for the first sentence to start FAST
+                # Note: We'll pass steps=22 to omnivoice_tts via speak()
+                asyncio.create_task(speak(content, language=target_lang, steps=(22 if current_sentence_index == 0 else 35)))
+                full_resp += " " + content
+                current_sentence_index += 1
+            
+            elif msg_type == "json":
+                # Final state/stock updates
+                next_state = content.get("state", call_state)
+                terminate_call = content.get("terminate", False)
+                stock = content.get("stock", {})
+                if stock:
+                    last_stock.update(stock)
+                
+                # State guard
+                cur_order = STATE_ORDER.get(call_state, 0)
+                new_order = STATE_ORDER.get(next_state, 0)
+                if new_order >= cur_order:
+                    call_state = next_state
+                
+                llm_ms = int((time.time() - llm_start) * 1000)
+                log.info(f"[STREAM-DONE] LLM finished in {llm_ms}ms. Next State: {call_state}")
+                
+                if terminate_call:
+                    log.info(f"[TERMINATE] Call will end after speech.")
+                    # Hang up after a safety buffer
+                    asyncio.create_task(asyncio.sleep(8)).add_done_callback(lambda _: plivo_client.calls.group_hangup(call_uuid))
 
-        # CODE-LEVEL AUTO-TERMINATE: If all SKUs are answered, force terminate immediately
-        expected_skus = local_call_data.get("skus", [])
-        if expected_skus and all(last_stock.get(sku) is not None for sku in expected_skus):
-            farewell = "धन्यवाद, आपका दिन शुभ हो।"
-            log.info(f"[AUTO-TERMINATE] All SKUs filled. Terminating call.")
-            await speak(farewell, language=target_lang)
-            if call_id:
-                add_message(call_id, "user", text)
-                add_message(call_id, "assistant", farewell)
-            try:
-                plivo_client.calls.group_hangup(call_uuid)
-            except:
-                try:
-                    plivo_client.calls.hangup(call_uuid)
-                except:
-                    pass
-            return "TERMINATE"
-
-        # State guard: forward only — NEVER go back to INTRO
-        cur_order = STATE_ORDER.get(call_state, 0)
-        new_order = STATE_ORDER.get(next_state, 0)
-        if new_order < cur_order:
-            next_state = call_state
-        # Extra guard: never allow going back to INTRO once in STOCK
-        if call_state != "INTRO" and next_state == "INTRO":
-            next_state = call_state
-
-        call_state = next_state
-
-        ms_total = int((time.time() - start_proc) * 1000)
-        log.info(
-            f"[{call_state}] LATENCY: {ms_total}ms (llm={llm_ms}ms) "
-            f"| User: '{text}' | Response: {full_resp}"
-        )
-        last_bot_response = full_resp
-
-        # Save to DB
+        last_bot_response = full_resp.strip()
         if call_id:
             add_message(call_id, "user", text)
-            add_message(call_id, "assistant", full_resp)
+            add_message(call_id, "assistant", last_bot_response)
 
-        if terminate_call:
-            await speak(full_resp, language=target_lang)
-            log.info(f"Terminating Call: {call_uuid}")
-            try:
-                plivo_client.calls.group_hangup(call_uuid)
-            except:
-                try:
-                    plivo_client.calls.hangup(call_uuid)
-                except:
-                    pass
-            return "TERMINATE"
-        else:
-            asyncio.create_task(speak(full_resp, language=target_lang))
-
-        history.append({"role": "user", "content": text})
-        history.append({"role": "assistant", "content": full_resp})
+        history.append({"role": "assistant", "content": last_bot_response})
 
     async def _pre_cache_skus():
         """Pre-generate TTS for all SKU questions in parallel — so first response is instant."""
