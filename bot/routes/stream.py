@@ -110,7 +110,7 @@ async def plivo_stream(websocket: WebSocket):
     playback_index = 0
     playback_cond = asyncio.Condition()
     audio_buffer = {} # {index: mulaw_bytes}
-    audio_ready_event = asyncio.Event()
+    streamer_reset_event = asyncio.Event()
 
     async def audio_sender_loop():
         """Central task to stream audio packets at a constant rate."""
@@ -124,12 +124,14 @@ async def plivo_stream(websocket: WebSocket):
                 while current_idx not in audio_buffer and not interrupt_event.is_set():
                     await asyncio.sleep(0.01)
                 
-                if interrupt_event.is_set():
-                    log.info("[STREAMER] Interrupt detected. Resetting loop.")
+                if interrupt_event.is_set() or streamer_reset_event.is_set():
+                    log.info(f"[STREAMER] Reset/Interrupt detected (Reset={streamer_reset_event.is_set()}). Resetting loop.")
                     is_speaking = False
-                    # Wait for interrupt to clear (managed by transcript_loop)
+                    # Wait for interrupt to clear
                     while interrupt_event.is_set():
                         await asyncio.sleep(0.05)
+                    
+                    streamer_reset_event.clear()
                     current_idx = 0
                     continue
 
@@ -204,6 +206,7 @@ async def plivo_stream(websocket: WebSocket):
         # 🚀 RESET SEQUENCE: Cleanup buffer for new round
         audio_buffer.clear()
         interrupt_event.clear()
+        streamer_reset_event.set()
             
         full_text = ""
         last_metadata = None
