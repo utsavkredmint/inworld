@@ -137,31 +137,34 @@ async def plivo_stream(websocket: WebSocket):
     agent_language = agent.get("language", "hindi") if agent else "hindi"
     voice_id = agent.get("voice") if agent else None
     
-    # 🔥 HOT LATENCY FIX: Start generating greeting AND fillers IMMEDIATELY and PARALLEL
+    # 🔥 HOT LATENCY FIX: Start generating greeting AND fillers IMMEDIATELY
     from services.tts import update_tts_cache
     
-    async def prepare_initial_audio():
+    async def prepare_fillers():
         fillers = ["जी", "जी बताइए", "जी देख रही हूँ"]
-        tasks = [omnivoice_tts(greeting, voice_id=voice_id, language=agent_language)]
         for f in fillers:
-            tasks.append(omnivoice_tts(f, voice_id=voice_id, language=agent_language))
-        
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        
-        # Cache greeting
-        if not isinstance(results[0], Exception) and results[0]:
-            update_tts_cache(greeting, results[0], voice_id=voice_id, language=agent_language)
-            log.info("[GREET] Greeting cached.")
-            
-        # Cache fillers
-        for i, f in enumerate(fillers):
-            res = results[i+1]
-            if not isinstance(res, Exception) and res:
-                update_tts_cache(f, res, voice_id=voice_id, language=agent_language)
-                filler_cache[f] = res
-        log.info(f"[CACHE] Initial audio prep done: {len(filler_cache)} fillers ready.")
+            try:
+                # We yield to the loop between fillers to ensure the greeting gets priority
+                await asyncio.sleep(0.1)
+                audio = await omnivoice_tts(f, voice_id=voice_id, language=agent_language)
+                if audio:
+                    update_tts_cache(f, audio, voice_id=voice_id, language=agent_language)
+                    filler_cache[f] = audio
+            except Exception as e:
+                log.warning(f"[CACHE] Filler prep failed for '{f}': {e}")
+        log.info(f"[CACHE] Ready with {len(filler_cache)} instant fillers")
 
-    audio_prep_task = asyncio.create_task(prepare_initial_audio())
+    async def prepare_greeting():
+        log.info(f"[GREET] Starting greeting generation: {greeting[:40]}...")
+        audio = await omnivoice_tts(greeting, voice_id=voice_id, language=agent_language)
+        if audio:
+            update_tts_cache(greeting, audio, voice_id=voice_id, language=agent_language)
+            log.info("[GREET] Greeting cached.")
+        else:
+            log.warning("[GREET] Greeting generation failed.")
+
+    greeting_prep_task = asyncio.create_task(prepare_greeting())
+    fillers_prep_task = asyncio.create_task(prepare_fillers())
 
     # Check for pre-setup session (STT + TTS already connected)
     from call_sessions import get_session
@@ -395,7 +398,7 @@ async def plivo_stream(websocket: WebSocket):
         setup_future = asyncio.gather(*setup_tasks) if setup_tasks else asyncio.sleep(0)
         
         # 🚀 Wait for greeting to be cached or generated
-        await audio_prep_task
+        await greeting_prep_task
         
         log.info("[GREET] Speaking greeting now.")
         await speak(greeting)
