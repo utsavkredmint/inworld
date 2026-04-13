@@ -298,6 +298,13 @@ async def plivo_stream(websocket: WebSocket):
                 llm_ms = int((time.time() - llm_start) * 1000)
                 log.info(f"[STREAM-DONE] LLM finished in {llm_ms}ms. Next State: {call_state}")
                 
+                # FALLBACK: If we haven't spoken anything during the stream, speak the full response now
+                final_resp_from_json = content.get("response", "")
+                if current_sentence_index == 0 and final_resp_from_json:
+                    log.info("[FALLBACK] Stream gave no sentences. Speaking full response from JSON.")
+                    asyncio.create_task(speak(final_resp_from_json, language=target_lang))
+                    full_resp = final_resp_from_json
+
                 if terminate_call:
                     log.info(f"[TERMINATE] Call will end after speech.")
                     # Hang up after a safety buffer

@@ -265,31 +265,29 @@ async def get_streaming_agent_response(
             full_raw += token
 
             # We try to extract the content of the "response" field while streaming.
-            # This is a 'poor man's streaming JSON parser' optimized for speed.
             if not response_started:
-                if '"response":' in full_raw:
+                # Be more flexible with whitespace/case
+                resp_marker = '"response":'
+                if resp_marker in full_raw.replace(" ", ""):
                     response_started = True
-                    # Find the first quote after "response":
-                    start_idx = full_raw.find('"response":') + 11
-                    after_resp = full_raw[start_idx:]
-                    first_quote = after_resp.find('"')
-                    if first_quote != -1:
+                    # Find where the actual content starts (after "response": and its opening quote)
+                    start_pos = full_raw.find('"response"') + 10
+                    after_marker = full_raw[start_pos:]
+                    q_start = after_marker.find('"')
+                    if q_start != -1:
                         quote_open = True
-                        sentence_buffer = after_resp[first_quote+1:]
+                        sentence_buffer = after_marker[q_start+1:]
                 continue
             
             # If we are inside the "response" quote:
             if quote_open:
+                # Optimization: process the whole token at once for speed
                 for char in token:
                     if char == "\\" and not escaped:
                         escaped = True
                         continue
                     if char == '"' and not escaped:
                         quote_open = False
-                        # Response field ended. Yield whatever is left in buffer.
-                        if sentence_buffer.strip():
-                            yield ("sentence", sentence_buffer.strip())
-                            sentence_buffer = ""
                         break
                     
                     sentence_buffer += char
@@ -297,10 +295,15 @@ async def get_streaming_agent_response(
 
                     # If we hit a sentence ending, yield it!
                     if any(sentence_buffer.endswith(end) for end in sentence_endings):
-                        clean_sentence = sentence_buffer.strip()
+                        clean_sentence = sentence_buffer.strip().replace('\\"', '"').replace('\\n', '\n')
                         if clean_sentence:
                             yield ("sentence", clean_sentence)
                         sentence_buffer = ""
+
+        # 🔥 CRITICAL: Flush remaining sentence_buffer if any
+        final_text = sentence_buffer.strip().replace('\\"', '"').replace('\\n', '\n')
+        if final_text:
+            yield ("sentence", final_text)
 
         # Finally, parse the full raw text as JSON for meta-data
         try:
@@ -308,6 +311,7 @@ async def get_streaming_agent_response(
             yield ("json", data)
         except Exception as e:
             log.warning(f"Failed to parse final streamed JSON: {e}")
+            yield ("json", {"response": full_raw, "state": state, "terminate": False})
             yield ("json", {"response": sentence_buffer, "state": state, "terminate": False})
 
     except Exception as e:
