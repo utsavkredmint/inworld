@@ -7,14 +7,13 @@ from config import DEEPGRAM_API_KEY
 log = logging.getLogger(__name__)
 
 DG_URL = (
-    "wss://api.deepgram.com/v1/listen"
+    "wss://api.deepgram.com/v2/listen"
     "?encoding=mulaw"
     "&sample_rate=8000"
     "&channels=1"
-    "&model=nova-3"
+    "&model=flux"
     "&language=hi"
     "&interim_results=true"
-    "&endpointing=1200"
     "&smart_format=false"
     "&punctuate=false"
 )
