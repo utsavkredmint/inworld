@@ -168,21 +168,23 @@ async def plivo_stream(websocket: WebSocket):
         else:
             log.warning("[GREET] Greeting generation failed.")
 
+    # Check for pre-setup session (STT + TTS already connected)
+    from call_sessions import get_session
+    pre_session = get_session(call_id) if call_id else None
+    tts_ctx = pre_session["tts_ctx"] if pre_session else TTSContext()
+    stt_pre_connected = bool(pre_session and pre_session.get("stt_ready"))
+
     # 🚀 LATENCY WIN: Start setup tasks concurrently
     setup_tasks = []
     if not stt_pre_connected:
         setup_tasks.append(stt_connect())
-    if not (pre_session and pre_session.get("tts_ctx")):
+    if not (pre_session and tts_ctx): # Using tts_ctx instead of pre_session.get
         setup_tasks.append(tts_ctx.open())
     
     setup_future = asyncio.gather(*setup_tasks) if setup_tasks else asyncio.sleep(0)
     
     greeting_prep_task = asyncio.create_task(prepare_greeting())
     fillers_prep_task = asyncio.create_task(prepare_fillers())
-
-    # Check for pre-setup session (STT + TTS already connected)
-    from call_sessions import get_session
-    pre_session = get_session(call_id) if call_id else None
 
     history = []
     is_speaking = False
@@ -196,8 +198,6 @@ async def plivo_stream(websocket: WebSocket):
     first_chunk_ts = None
     vad = SileroVAD()
     speak_start_ts = 0
-    tts_ctx = pre_session["tts_ctx"] if pre_session else TTSContext()
-    stt_pre_connected = bool(pre_session and pre_session.get("stt_ready"))
     last_stock = {}
     is_initial_greeting = True # New guard to prevent interruption during greeting
     
