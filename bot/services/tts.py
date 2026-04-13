@@ -74,21 +74,36 @@ async def _get_model():
             return None
 
 def resample_and_to_mulaw(audio_tensor, orig_sr=24000, target_sr=8000):
-    """Convert OmniVoice output (Tensor) to Plivo-ready mu-law (bytes)."""
+    """Convert OmniVoice output (Tensor) to Plivo-ready mu-law (bytes) with high fidelity."""
     # 1. Ensure it's on CPU and 1D
     audio = audio_tensor.detach().cpu()
     if audio.dim() > 1:
         audio = audio.squeeze(0)
     
-    # 2. Resample using torchaudio
+    # 2. Peak Normalization: Ensure max volume is at -1dB (0.9 amplitude)
+    # This is CRITICAL for telephony to avoid 'tinny' or 'metallic' sounds
+    max_val = torch.abs(audio).max()
+    if max_val > 0:
+        audio = (audio / max_val) * 0.9
+    
+    # 3. High-Quality Resampling using Sinc Interpolation
     if orig_sr != target_sr:
-        resampler = torchaudio.transforms.Resample(orig_sr, target_sr)
+        # We use a higher quality resampling method to preserve voice texture
+        resampler = torchaudio.transforms.Resample(
+            orig_sr, target_sr, 
+            lowpass_filter_width=64, 
+            resampling_method='sinc_interpolation'
+        )
         audio = resampler(audio)
     
-    # 3. Convert to PCM 16-bit
+    # 4. Add subtle dithering to prevent Mu-law quantization noise (hiss)
+    dither = (torch.rand_like(audio) - 0.5) / 32768.0
+    audio = audio + dither
+    
+    # 5. Convert to PCM 16-bit
     pcm16 = (audio * 32767).to(torch.int16).numpy().tobytes()
     
-    # 4. Convert PCM to mu-law 8kHz
+    # 6. Convert PCM to mu-law 8kHz
     mulaw = audioop.lin2ulaw(pcm16, 2)
     return mulaw
 
