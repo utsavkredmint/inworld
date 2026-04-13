@@ -141,7 +141,7 @@ def _resolve_audio_path(path):
     
     return path
 
-async def omnivoice_tts(text, voice_id=None, language="hindi"):
+async def omnivoice_tts(text, voice_id=None, language="hindi", num_inference_steps=35):
     """Generate audio using OmniVoice."""
     model = await _get_model()
     if not model:
@@ -221,7 +221,7 @@ async def omnivoice_tts(text, voice_id=None, language="hindi"):
             ref_audio=ref_audio,
             ref_text=ref_text,
             language=language or "hindi",
-            num_inference_steps=35 # Increased for better pronunciation clarity
+            num_inference_steps=num_inference_steps # Custom steps for speed/quality trade-off
         ))
         
         if not audio_list or len(audio_list) == 0:

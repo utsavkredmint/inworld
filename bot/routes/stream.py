@@ -140,13 +140,17 @@ async def plivo_stream(websocket: WebSocket):
     # 🔥 HOT LATENCY FIX: Start generating greeting AND fillers IMMEDIATELY
     from services.tts import update_tts_cache
     
+    # 🔥 HOT LATENCY FIX: Start generating greeting AND fillers IMMEDIATELY
+    from services.tts import update_tts_cache
+    
     async def prepare_fillers():
         fillers = ["जी", "जी बताइए", "जी देख रही हूँ"]
         for f in fillers:
             try:
                 # We yield to the loop between fillers to ensure the greeting gets priority
-                await asyncio.sleep(0.1)
-                audio = await omnivoice_tts(f, voice_id=voice_id, language=agent_language)
+                await asyncio.sleep(0.05)
+                # Use fast mode (20 steps) for fillers to ensure 50-60ms response potential
+                audio = await omnivoice_tts(f, voice_id=voice_id, language=agent_language, num_inference_steps=20)
                 if audio:
                     update_tts_cache(f, audio, voice_id=voice_id, language=agent_language)
                     filler_cache[f] = audio
@@ -155,8 +159,9 @@ async def plivo_stream(websocket: WebSocket):
         log.info(f"[CACHE] Ready with {len(filler_cache)} instant fillers")
 
     async def prepare_greeting():
-        log.info(f"[GREET] Starting greeting generation: {greeting[:40]}...")
-        audio = await omnivoice_tts(greeting, voice_id=voice_id, language=agent_language)
+        log.info(f"[GREET] Starting FAST greeting generation: {greeting[:40]}...")
+        # Use fast mode (20 steps) for initial greeting to hit 2-3s target
+        audio = await omnivoice_tts(greeting, voice_id=voice_id, language=agent_language, num_inference_steps=20)
         if audio:
             update_tts_cache(greeting, audio, voice_id=voice_id, language=agent_language)
             log.info("[GREET] Greeting cached.")
@@ -185,6 +190,7 @@ async def plivo_stream(websocket: WebSocket):
     tts_ctx = pre_session["tts_ctx"] if pre_session else TTSContext()
     stt_pre_connected = bool(pre_session and pre_session.get("stt_ready"))
     last_stock = {}
+    is_initial_greeting = True # New guard to prevent interruption during greeting
     
     # 🌍 Voice & Language Identity
     agent_language = agent.get("language", "hindi") if agent else "hindi"
@@ -388,6 +394,7 @@ async def plivo_stream(websocket: WebSocket):
         log.info("[CACHE] Background pre-caching complete.")
 
     async def _init_and_greet():
+        nonlocal is_initial_greeting
         # 🔗 Start setup (ONLY if not already pre-connected)
         setup_tasks = []
         if not stt_pre_connected:
@@ -400,8 +407,11 @@ async def plivo_stream(websocket: WebSocket):
         # 🚀 Wait for greeting to be cached or generated
         await greeting_prep_task
         
-        log.info("[GREET] Speaking greeting now.")
+        log.info("[GREET] Speaking greeting now. Interruption DISABLED.")
+        is_initial_greeting = True
         await speak(greeting)
+        is_initial_greeting = False # Enable interruptions after greeting
+        log.info("[GREET] Greeting finished. Interruption ENABLED.")
 
         if call_id:
             add_message(call_id, "assistant", greeting)
@@ -478,16 +488,18 @@ async def plivo_stream(websocket: WebSocket):
                     continue
 
                 # If bot is speaking and user said something substantial → interrupt
-                # Ignore short acknowledgments ("हां", "हैं", "ok") — not real interrupts
                 if is_speaking:
-                    # Patient Interruption: Only stop the bot if the user says something substantial (>= 4 words)
-                    # This prevents background noise or 'umm/hmm' from interrupting the flow.
+                    if is_initial_greeting:
+                        log.info(f"[GREET] Ignoring user speech during greeting: '{text}'")
+                        continue
+
+                    # Patient Interruption for regular flow
                     word_count = len(text.split())
-                    if word_count >= 4:
+                    if word_count >= 2: # Reduced from 4 to be more responsive as requested
                         interrupt_event.set()
                         log.info(f"[INTERRUPT] Substantial user speech: '{text}' (words={word_count})")
                         while is_speaking:
-                            await asyncio.sleep(0.05)
+                            await asyncio.sleep(0.01)
                     else:
                         log.info(f"[SKIP] Short snippet while bot speaking: '{text}' — ignoring.")
                         continue 
