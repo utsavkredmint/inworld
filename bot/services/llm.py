@@ -10,12 +10,13 @@ from datetime import datetime
 log = logging.getLogger(__name__)
 
 # Ensure .env is loaded directly for Gemini configuration
-load_dotenv()
+load_dotenv(override=True)
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 
 if not GOOGLE_API_KEY:
     log.error("[LLM] GOOGLE_API_KEY not found in environment!")
 else:
+    log.info(f"[LLM] Initializing Gemini with key: {GOOGLE_API_KEY[:4]}...{GOOGLE_API_KEY[-4:]}")
     genai.configure(api_key=GOOGLE_API_KEY)
 
 # We use Gemini 1.5 Flash for the fastest voice turnaround
