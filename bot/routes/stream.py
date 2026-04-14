@@ -324,6 +324,11 @@ async def plivo_stream(websocket: WebSocket):
                    duration_sec=int(time.time()-start_connect), 
                    metadata=json.dumps({"stock":last_stock})))
     
+    # 🚀 GRACEFUL TERMINATION: Wait for final audio to finish before closing
+    # Otherwise the call cuts off immediately after the LLM says "Bye"
+    while is_speaking:
+        await asyncio.sleep(0.1)
+        
     await stt_disconnect()
     try:
         # Check if websocket state is suitable for closing

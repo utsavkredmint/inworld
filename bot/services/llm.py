@@ -83,10 +83,10 @@ async def get_agent_response(
                 
                 new_text = text_so_far[yielded_index:]
                 
-                # 🚀 ULTRA LATENCY: Yield FIRST chunk (4 words) for near-instant speech
+                # 🚀 CONTINUITY: Yield FIRST chunk (20 words) for more stable speech start
                 words = new_text.strip().split()
-                if yielded_index == 0 and len(words) >= 4:
-                     chunk_to_yield = " ".join(words[:4])
+                if yielded_index == 0 and len(words) >= 20:
+                     chunk_to_yield = " ".join(words[:20])
                      if any('\u0900'<=c<='\u097f' or 'a'<=c.lower()<='z' for c in chunk_to_yield):
                          yield (chunk_to_yield + " ", False, None)
                      yielded_index += len(chunk_to_yield) + 1
