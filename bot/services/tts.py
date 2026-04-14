@@ -34,6 +34,7 @@ _model = None
 _model_lock = asyncio.Lock()
 _resampler = None # 🚀 LATENCY WIN: Pre-instantiated resampler
 _resampler_lock = asyncio.Lock()
+_synthesis_lock = asyncio.Lock() # 🚀 GPU SERIALIZER: Fixes 1500ms parallel lag
 
 # Reference audio and text defaults
 DEFAULT_REF_AUDIO_NAME = os.getenv("DEFAULT_REF_AUDIO_NAME", "default_ref.mp3")
@@ -274,14 +275,16 @@ async def omnivoice_tts(text, voice_id=None, language="hindi", num_inference_ste
     start = time.time()
     try:
         # OmniVoice generate is usually blocking, we run in executor
-        loop = asyncio.get_event_loop()
-        audio_list = await loop.run_in_executor(None, lambda: model.generate(
-            text=text,
-            ref_audio=ref_audio,
-            ref_text=ref_text,
-            language=language or "hindi",
-            num_inference_steps=num_inference_steps # Custom steps for speed/quality trade-off
-        ))
+        # 🚀 GPU SERIALIZER: Ensure only one generation happens at a time to prevent context switching lag
+        async with _synthesis_lock:
+            loop = asyncio.get_event_loop()
+            audio_list = await loop.run_in_executor(None, lambda: model.generate(
+                text=text,
+                ref_audio=ref_audio,
+                ref_text=ref_text,
+                language=language or "hindi",
+                num_inference_steps=num_inference_steps # Custom steps for speed/quality trade-off
+            ))
         
         if not audio_list or len(audio_list) == 0:
             return None

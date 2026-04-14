@@ -197,14 +197,9 @@ async def plivo_stream(websocket: WebSocket):
         is_speaking = False
         vad.reset()
 
-    async def _process_text(text, target_lang=None):
+    async def _process_text(text, target_lang=None, start_index=0):
         nonlocal call_state, last_bot_response, last_stock, playback_index
         
-        # 🚀 RESET SEQUENCE: Every interaction starts from 0
-        async with playback_cond:
-            playback_index = 0
-            playback_cond.notify_all()
-            
         full_text = ""
         last_metadata = None
         
@@ -213,7 +208,7 @@ async def plivo_stream(websocket: WebSocket):
         if call_id: asyncio.create_task(asyncio.to_thread(add_message, call_id, "user", text))
         history.append({"role": "user", "content": text})
 
-        chunk_idx = 0
+        chunk_idx = start_index
         async for chunk, is_final, metadata in get_agent_response(
             call_state, last_bot_response, history, text, local_call_data, last_stock,
             system_prompt_override=system_prompt_override, is_generic=is_generic_agent
@@ -298,7 +293,17 @@ async def plivo_stream(websocket: WebSocket):
                     else: continue
                 
                 log.info(f"[USER] {text}")
-                result = await _process_text(text, target_lang=tts_language)
+                
+                # 🚀 ULTRA LATENCY: Reset sequence and trigger immediate filler
+                async with playback_cond:
+                    playback_index = 0
+                    playback_cond.notify_all()
+                
+                # Pre-cached "जी" plays in ~20ms
+                asyncio.create_task(speak("जी", index=0, is_filler=True))
+                
+                # Actual response starts at index 1
+                result = await _process_text(text, target_lang=tts_language, start_index=1)
                 if result == "TERMINATE": break
             except Exception: pass
 
