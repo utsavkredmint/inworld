@@ -3,6 +3,7 @@ import base64
 import json
 import logging
 import time
+import random
 from datetime import datetime
 
 import aiohttp
@@ -299,8 +300,10 @@ async def plivo_stream(websocket: WebSocket):
                     playback_index = 0
                     playback_cond.notify_all()
                 
-                # Pre-cached "जी" plays in ~20ms
-                asyncio.create_task(speak("जी", index=0, is_filler=True))
+                # Pre-cached Variety Fillers (Sub-50ms Perception)
+                fillers = ["जी", "ठीक है", "बिल्कुल", "जी बताइए", "जी समझ गई", "सही है", "ओके"]
+                filler = random.choice(fillers)
+                asyncio.create_task(speak(filler, index=0, is_filler=True))
                 
                 # Actual response starts at index 1
                 result = await _process_text(text, target_lang=tts_language, start_index=1)

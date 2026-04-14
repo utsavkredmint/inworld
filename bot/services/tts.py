@@ -71,7 +71,7 @@ async def init_tts():
             ref_audio = _resolve_audio_path(DEFAULT_REF_AUDIO)
             
             # Pre-cache fillers and a common greeting
-            fillers = ["नमस्ते", "जी", "जी बताइए", "जी देख रही हूँ"]
+            fillers = ["जी", "ठीक है", "बिल्कुल", "जी बताइए", "जी समझ गई", "सही है", "ओके", "नमस्कार"]
             for f in fillers:
                 audio = await omnivoice_tts(f, num_inference_steps=12)
                 if audio:

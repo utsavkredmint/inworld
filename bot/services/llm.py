@@ -2,6 +2,7 @@ import json
 import logging
 from groq import AsyncGroq
 from config import GROQ_API_KEY
+from datetime import datetime
 
 log = logging.getLogger(__name__)
 groq_client = AsyncGroq(api_key=GROQ_API_KEY)
@@ -33,8 +34,21 @@ async def get_agent_response(
         
         # 2. Add Session Context (Lean)
         context_block = f'Context: State={state}, Stock={json.dumps(current_stock)}, LastMsg="{last_bot_msg}"'
-
-        full_system_prompt = f"{base_prompt}\n{context_block}\nOutput JSON with key 'response' first."
+        
+        # 🚀 VOICE GUARDRAILS: Apply global rules to ALL dynamic agents
+        time_str = datetime.now().strftime("%I:%M %p")
+        has_history = "Yes" if len(history) > 0 else "No"
+        
+        guardrails = f"""
+### VOICE BOT GUARDRAILS (STRICT):
+- Current Server Time: {time_str}
+- Conversation Started: {has_history}
+- RULE: If 'Conversation Started' is Yes, NEVER repeat the greeting intro (नमस्कार).
+- RULE: Every response MUST be under 20 words.
+- RULE: Ask ONLY one question at a time.
+- RULE: If the user says "Hello", "जी", or similar, skip context-less greeting and proceed with the next step.
+"""
+        full_system_prompt = f"{base_prompt}\n{guardrails}\n{context_block}\nOutput valid JSON with key 'response' first."
 
         messages = [{"role": "system", "content": full_system_prompt}]
         
