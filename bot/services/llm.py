@@ -83,10 +83,10 @@ async def get_agent_response(
                 
                 new_text = text_so_far[yielded_index:]
                 
-                # 🚀 TURBO CONTINUITY: Yield FIRST chunk (6 words) for instant start
+                # 🚀 BALANCED CONTINUITY: Yield FIRST chunk (12 words) for stable start
                 words = new_text.strip().split()
-                if yielded_index == 0 and len(words) >= 6:
-                     chunk_to_yield = " ".join(words[:6])
+                if yielded_index == 0 and len(words) >= 12:
+                     chunk_to_yield = " ".join(words[:12])
                      if any('\u0900'<=c<='\u097f' or 'a'<=c.lower()<='z' for c in chunk_to_yield):
                          yield (chunk_to_yield + " ", False, None)
                      yielded_index += len(chunk_to_yield) + 1
