@@ -86,11 +86,31 @@ async def get_agent_response(
                 # 🚀 BALANCED CONTINUITY: Yield FIRST chunk (12 words) for stable start
                 words = new_text.strip().split()
                 if yielded_index == 0 and len(words) >= 12:
-                     chunk_to_yield = " ".join(words[:12])
-                     if any('\u0900'<=c<='\u097f' or 'a'<=c.lower()<='z' for c in chunk_to_yield):
-                         yield (chunk_to_yield + " ", False, None)
-                     yielded_index += len(chunk_to_yield) + 1
-                     continue
+                     # Find character position of the end of the 12th word in the original text_so_far
+                     word_count = 0
+                     pos = 0
+                     in_word = False
+                     for i, char in enumerate(text_so_far):
+                         if char.strip():
+                             if not in_word:
+                                 word_count += 1
+                                 in_word = True
+                         else:
+                             in_word = False
+                         
+                         if word_count == 12:
+                             # Continue until the end of this current word
+                             while i+1 < len(text_so_far) and text_so_far[i+1].strip():
+                                 i += 1
+                             pos = i + 1
+                             break
+                     
+                     if pos > 0:
+                         chunk_to_yield = text_so_far[:pos].strip()
+                         if any('\u0900'<=c<='\u097f' or 'a'<=c.lower()<='z' for c in chunk_to_yield):
+                             yield (chunk_to_yield + " ", False, None)
+                         yielded_index = pos
+                         continue
 
                 # Yield at sentence boundaries (full stop, question mark, etc.)
                 if any(char in new_text for char in ["।", ".", "?", "!", "\n"]):

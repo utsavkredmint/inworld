@@ -113,6 +113,7 @@ async def plivo_stream(websocket: WebSocket):
     current_turn_id = 0
     playback_index = 0
     playback_cond = asyncio.Condition()
+    turn_in_progress = False
 
     # Fillers & TTS Prep
     from services.tts import get_tts_cache_key, TTS_CACHE, update_tts_cache
@@ -194,43 +195,50 @@ async def plivo_stream(websocket: WebSocket):
             is_speaking = False
 
     async def _process_text(text, target_lang=None, start_index=0):
-        nonlocal call_state, last_bot_response, last_stock, playback_index, current_turn_id
-        
-        full_text = ""
-        last_metadata = None
-        
-        # Log to DB/History
-        # 🚀 ASYNC DB Update: Don't block the conversation
-        if call_id: asyncio.create_task(asyncio.to_thread(add_message, call_id, "user", text))
-        history.append({"role": "user", "content": text})
-
-        chunk_idx = start_index
-        t_id = current_turn_id
-        async for chunk, is_final, metadata in get_agent_response(
-            call_state, last_bot_response, history, text, local_call_data, last_stock,
-            system_prompt_override=system_prompt_override, is_generic=is_generic_agent
-        ):
-            if t_id != current_turn_id: break
-            if chunk:
-                full_text += chunk
-                asyncio.create_task(speak(chunk, index=chunk_idx, turn_id=t_id, language=target_lang))
-                chunk_idx += 1
-            if is_final: last_metadata = metadata
-
-        if last_metadata:
-            llm_text, next_state, terminate_call, stock = last_metadata
-            call_state = next_state
-            last_bot_response = llm_text
-            if stock: last_stock.update(stock)
-            history.append({"role": "assistant", "content": llm_text})
-            if call_id: asyncio.create_task(asyncio.to_thread(add_message, call_id, "assistant", llm_text))
+        nonlocal call_state, last_bot_response, last_stock, playback_index, current_turn_id, turn_in_progress
+        turn_in_progress = True
+        try:
+            full_text = ""
+            last_metadata = None
             
-            if terminate_call:
-                await asyncio.sleep(1.5)
-                try: plivo_client.calls.group_hangup(call_uuid)
-                except: pass
-                return "TERMINATE"
-        return "CONTINUE"
+            # Log to DB/History
+            if call_id: asyncio.create_task(asyncio.to_thread(add_message, call_id, "user", text))
+            history.append({"role": "user", "content": text})
+
+            chunk_idx = start_index 
+            t_id = current_turn_id
+
+            async for chunk, is_final, metadata in get_agent_response(
+                state=call_state,
+                last_bot_msg=last_bot_response,
+                history=history,
+                user_text=text,
+                call_data=local_call_data,
+                current_stock=last_stock,
+                system_prompt_override=system_prompt_override,
+                is_generic=is_generic_agent
+            ):
+                if t_id != current_turn_id: break
+                if chunk:
+                    full_text += chunk
+                    # 🚀 PARALLEL GPU: Fire and forget each chunk
+                    asyncio.create_task(speak(chunk, index=chunk_idx, turn_id=t_id, language=target_lang))
+                    chunk_idx += 1
+                
+                if is_final: last_metadata = metadata
+
+            if last_metadata:
+                response, next_state, terminate, updated_stock = last_metadata
+                last_bot_response = response
+                call_state = next_state
+                if updated_stock: last_stock.update(updated_stock)
+                history.append({"role": "assistant", "content": response})
+                if call_id: asyncio.create_task(asyncio.to_thread(add_message, call_id, "assistant", response))
+                
+                if terminate: return "TERMINATE"
+            return "CONTINUE"
+        finally:
+            turn_in_progress = False
 
     async def _init_and_greet():
         nonlocal is_initial_greeting
@@ -324,9 +332,9 @@ async def plivo_stream(websocket: WebSocket):
                    duration_sec=int(time.time()-start_connect), 
                    metadata=json.dumps({"stock":last_stock})))
     
-    # 🚀 GRACEFUL TERMINATION: Wait for final audio to finish before closing
-    # Otherwise the call cuts off immediately after the LLM says "Bye"
-    while is_speaking:
+    # 🚀 GRACEFUL TERMINATION: Wait for LLM thought AND audio playback to finish
+    # Otherwise the call cuts off during gaps between sentences
+    while turn_in_progress or is_speaking:
         await asyncio.sleep(0.1)
         
     await stt_disconnect()
