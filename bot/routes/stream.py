@@ -119,79 +119,79 @@ async def plivo_stream(websocket: WebSocket):
 
     async def speak(text, index=0, turn_id=0, language=None):
         nonlocal is_speaking, playback_index
-        if turn_id != current_turn_id: return
-        
-        if not stream_sid:
-            log.info(f"[SPEAK] Waiting for SID to speak: {text[:20]}...")
-            try:
-                await asyncio.wait_for(stream_ready_event.wait(), timeout=1.0)
-            except asyncio.TimeoutError:
-                log.warning("[SPEAK] Timeout waiting for SID. Proceeding anyway.")
-            
-        is_speaking = True
-        target_tts_lang = language or tts_language
-        prepared = prepare_for_tts(text)
-        cache_key = get_tts_cache_key(prepared, voice_id, target_tts_lang)
-        
-        audio = None
-        if cache_key in TTS_CACHE:
-            audio = TTS_CACHE[cache_key]
-            log.info(f"[SPEAK] Cache HIT: {text[:40]} | Bytes: {len(audio)}")
-        else:
+        try:
             if turn_id != current_turn_id: return
-            log.info(f"[SPEAK] Generating TTS: {text[:40]}")
-            audio = await omnivoice_tts(text, voice_id=voice_id, language=target_tts_lang)
-            if audio:
-                update_tts_cache(text, audio, voice_id=voice_id, language=target_tts_lang)
-
-        if turn_id != current_turn_id: return
-
-        if not audio:
-            log.warning(f"[SPEAK] No audio generated for: {text[:40]}")
-            is_speaking = False
-            # Still need to increment index to not block the chain
-            async with playback_cond:
-                playback_index += 1
-                playback_cond.notify_all()
-            return
-
-        # 🚀 SEQUENCE SYNC: Wait for our turn within the current Turn ID
-        async with playback_cond:
-            log.info(f"[SPEAK] T[{turn_id}] Chunk {index} ready. Waiting (Current: {playback_index})")
-            while playback_index < index and turn_id == current_turn_id:
-                await playback_cond.wait()
             
-            if turn_id != current_turn_id:
+            if not stream_sid:
+                log.info(f"[SPEAK] Waiting for SID to speak: {text[:20]}...")
+                try:
+                    await asyncio.wait_for(stream_ready_event.wait(), timeout=1.0)
+                except asyncio.TimeoutError:
+                    log.warning("[SPEAK] Timeout waiting for SID. Proceeding anyway.")
+                
+            is_speaking = True
+            target_tts_lang = language or tts_language
+            prepared = prepare_for_tts(text)
+            cache_key = get_tts_cache_key(prepared, voice_id, target_tts_lang)
+            
+            audio = None
+            if cache_key in TTS_CACHE:
+                audio = TTS_CACHE[cache_key]
+                log.info(f"[SPEAK] Cache HIT: {text[:40]} | Bytes: {len(audio)}")
+            else:
+                if turn_id != current_turn_id: return
+                log.info(f"[SPEAK] Generating TTS: {text[:40]}")
+                audio = await omnivoice_tts(text, voice_id=voice_id, language=target_tts_lang)
+                if audio:
+                    update_tts_cache(text, audio, voice_id=voice_id, language=target_tts_lang)
+
+            if turn_id != current_turn_id: return
+
+            if not audio:
+                log.warning(f"[SPEAK] No audio generated for: {text[:40]}")
+                # Still need to increment index to not block the chain
+                async with playback_cond:
+                    playback_index += 1
+                    playback_cond.notify_all()
                 return
 
-            chunk_size = 320 # 40ms
-            try:
-                for i in range(0, len(audio), chunk_size):
-                    if turn_id != current_turn_id: break
-                    if websocket.client_state == WebSocketDisconnect: break 
-                    
-                    chunk = audio[i:i+chunk_size]
-                    msg = {
-                        "event": "playAudio",
-                        "media": {
-                            "payload": base64.b64encode(chunk).decode(),
-                            "contentType": "audio/x-mulaw",
-                            "sampleRate": 8000
-                        },
-                        "streamSid": stream_sid
-                    }
-                    await websocket.send_text(json.dumps(msg))
-                    await asyncio.sleep(0.04) # 40ms buffer sleep
-            except Exception as e:
-                log.error(f"[STREAM] WS Send Error: {e}")
+            # 🚀 SEQUENCE SYNC: Wait for our turn within the current Turn ID
+            async with playback_cond:
+                log.info(f"[SPEAK] T[{turn_id}] Chunk {index} ready. Waiting (Current: {playback_index})")
+                while playback_index < index and turn_id == current_turn_id:
+                    await playback_cond.wait()
+                
+                if turn_id != current_turn_id:
+                    return
 
-        # 🚀 FINAL SYNC: Increment index only if turn matches
-        async with playback_cond:
-            if turn_id == current_turn_id:
-                playback_index += 1
-                playback_cond.notify_all()
+                chunk_size = 320 # 40ms
+                try:
+                    for i in range(0, len(audio), chunk_size):
+                        if turn_id != current_turn_id: break
+                        if websocket.client_state == WebSocketDisconnect: break 
+                        
+                        chunk = audio[i:i+chunk_size]
+                        msg = {
+                            "event": "playAudio",
+                            "media": {
+                                "payload": base64.b64encode(chunk).decode(),
+                                "contentType": "audio/x-mulaw",
+                                "sampleRate": 8000
+                            },
+                            "streamSid": stream_sid
+                        }
+                        await websocket.send_text(json.dumps(msg))
+                        await asyncio.sleep(0.04) # 40ms buffer sleep
+                except Exception as e:
+                    log.error(f"[STREAM] WS Send Error: {e}")
 
-        is_speaking = False
+            # 🚀 FINAL SYNC: Increment index only if turn matches
+            async with playback_cond:
+                if turn_id == current_turn_id:
+                    playback_index += 1
+                    playback_cond.notify_all()
+        finally:
+            is_speaking = False
 
     async def _process_text(text, target_lang=None, start_index=0):
         nonlocal call_state, last_bot_response, last_stock, playback_index
@@ -287,8 +287,6 @@ async def plivo_stream(websocket: WebSocket):
                         # 🚀 CLEAR QUEUE: Wake up all waiting speak tasks so they can exit
                         async with playback_cond:
                             playback_cond.notify_all()
-                            
-                        while is_speaking: await asyncio.sleep(0.01)
                     else: continue
                 
                 log.info(f"[USER] {text}")
