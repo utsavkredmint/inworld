@@ -14,7 +14,7 @@ DG_URL = (
     "&model=nova-2"
     "&language=hi"
     "&interim_results=true"
-    "&endpointing=100" # 🚀 ULTRA LATENCY: 100ms triggers transcription immediately
+    "&endpointing=50" # 🚀 RTX 6000 POWER: 50ms near-instant transcription
     "&smart_format=true"
     "&punctuate=true"
 )

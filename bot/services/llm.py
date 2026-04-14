@@ -35,39 +35,34 @@ async def get_agent_response(
         # 2. Add Session Context (Lean)
         context_block = f'Context: State={state}, Stock={json.dumps(current_stock)}, LastMsg="{last_bot_msg}"'
         
-        # 🚀 VOICE GUARDRAILS: Apply global rules to ALL dynamic agents
+        # 🚀 VOICE GUARDRAILS: Integrated strictly for adherence
         time_str = datetime.now().strftime("%I:%M %p")
-        has_history = "Yes" if len(history) > 0 else "No"
-        
         guardrails = f"""
-### VOICE BOT GUARDRAILS (STRICT):
-- Current Server Time: {time_str}
-- Conversation Started: {has_history}
-- RULE: If 'Conversation Started' is Yes, NEVER repeat the greeting intro (नमस्कार).
-- RULE: If the user says "Hello", "जी", "हां जी", or similar repetitive interjections mid-call, IGNORE them and repeat your last question/step instead of giving car info or intro.
-- RULE: Every response MUST be under 20 words.
-- RULE: Ask ONLY one question at a time.
-- RULE: Strictly follow the booking flow (Date -> Time -> KM -> Confirm).
+### OPERATIONAL RULES:
+- TIME: {time_str}
+- NEVER repeat intro/नमस्कार.
+- IGNORE contextless "Hello/Ji" - stick to the current question.
+- Max 20 words. One question at a time.
+- FLOW: Date -> Time -> KM -> Confirm.
 """
-        full_system_prompt = f"{base_prompt}\n{guardrails}\n{context_block}\nOutput valid JSON with key 'response' first."
+        full_system_prompt = f"{base_prompt}\n{guardrails}\n{context_block}\nReturn JSON: {{\"response\": \"...\", \"state\": \"...\", \"terminate\": false}}"
 
         messages = [{"role": "system", "content": full_system_prompt}]
         
-        # 3. Add History (Last 5 turns)
-        for h in history[-5:]:
+        # 3. Add History (Last 3 turns for lean context)
+        for h in history[-3:]:
             messages.append({"role": h["role"], "content": h["content"]})
         
-        # 4. Final User Query (Clean - only the transcript)
+        # 4. Final User Query
         messages.append({"role": "user", "content": user_text})
 
         # 🚀 STREAM from Groq
         stream = await groq_client.chat.completions.create(
             model="llama-3.1-8b-instant",
             messages=messages,
-            max_tokens=250,
+            max_tokens=150,
             temperature=0,
             stream=True,
-            # Use json_object format for better reliability
             response_format={"type": "json_object"}
         )
 
@@ -78,23 +73,20 @@ async def get_agent_response(
             delta = chunk.choices[0].delta.content or ""
             full_raw += delta
             
-            # Streaming extraction for "response" field
             if '"response": "' in full_raw:
                 start_marker = '"response": "'
                 start_idx = full_raw.find(start_marker) + len(start_marker)
                 current_content = full_raw[start_idx:]
                 
-                # Check for the closing quote of the "response" field
                 end_idx = current_content.find('"')
                 text_so_far = current_content if end_idx == -1 else current_content[:end_idx]
                 
                 new_text = text_so_far[yielded_index:]
                 
-                # 🚀 CONTINUITY WIN: Yield FIRST chunk (12 words) to ensure playback is long enough to hide NEXT chunk synthesis
+                # 🚀 ULTRA LATENCY: Yield FIRST chunk (4 words) for near-instant speech
                 words = new_text.strip().split()
-                if yielded_index == 0 and len(words) >= 12:
-                     # If we have 12 words, yield them to start synthesis
-                     chunk_to_yield = " ".join(words[:12])
+                if yielded_index == 0 and len(words) >= 4:
+                     chunk_to_yield = " ".join(words[:4])
                      if any('\u0900'<=c<='\u097f' or 'a'<=c.lower()<='z' for c in chunk_to_yield):
                          yield (chunk_to_yield + " ", False, None)
                      yielded_index += len(chunk_to_yield) + 1
