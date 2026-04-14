@@ -143,7 +143,7 @@ def resample_and_to_mulaw(audio_tensor, orig_sr=24000, target_sr=8000):
             # For strict safety in async, we'd need more, but here it's usually one generation at a time per session.
             _resampler = torchaudio.transforms.Resample(
                 orig_sr, target_sr, 
-                lowpass_filter_width=64, # 🚀 Increase for better clarity
+                lowpass_filter_width=128, # 🚀 ULTRA FIDELITY: Sharp audio even at 8kHz
                 resampling_method='sinc_interp_hann' 
             )
         audio = _resampler(audio)
@@ -193,8 +193,8 @@ def _resolve_audio_path(path):
     
     return path
 
-async def omnivoice_tts(text, voice_id=None, language="hindi", num_inference_steps=12):
-    """Generate audio using OmniVoice with Cache-Awareness. Steps=12 for clarity."""
+async def omnivoice_tts(text, voice_id=None, language="hindi", num_inference_steps=11):
+    """Generate audio using OmniVoice with Cache-Awareness. Steps=11 for speed/quality balance."""
     
     # 🚀 LATENCY WIN: Check cache BEFORE doing anything else
     cache_key = get_tts_cache_key(text, voice_id, language)

@@ -14,7 +14,7 @@ DG_URL = (
     "&model=nova-2"
     "&language=hi"
     "&interim_results=true"
-    "&endpointing=150" # 🚀 LATENCY WIN: 150ms instead of 300ms
+    "&endpointing=100" # 🚀 ULTRA LATENCY: 100ms triggers transcription immediately
     "&smart_format=true"
     "&punctuate=true"
 )
@@ -152,9 +152,9 @@ async def get_final_transcript(timeout=8.0):
                 break
             continue
         
-        # 🚀 LATENCY WIN: If we have text and it's been > 0.8s since last fragment (even if others are coming), assume done for faster turn-around
-        if collected and (asyncio.get_event_loop().time() > deadline - timeout + 0.8):
-            log.info("[STT] Force completing due to 0.8s silence")
+        # 🚀 ULTRA LATENCY: If we have text and it's been > 0.4s since last fragment, assume user is done
+        if collected and (asyncio.get_event_loop().time() > deadline - timeout + 0.4):
+            log.info("[STT] Force completing due to 0.4s silence")
             break
 
     result = " ".join(collected).strip()
