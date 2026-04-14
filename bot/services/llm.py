@@ -1,15 +1,23 @@
 import json
 import logging
 import asyncio
+import os
 from typing import AsyncGenerator
 import google.generativeai as genai
-from config import GOOGLE_API_KEY
+from dotenv import load_dotenv
 from datetime import datetime
 
 log = logging.getLogger(__name__)
 
-# Configure Gemini
-genai.configure(api_key=GOOGLE_API_KEY)
+# Ensure .env is loaded directly for Gemini configuration
+load_dotenv()
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+
+if not GOOGLE_API_KEY:
+    log.error("[LLM] GOOGLE_API_KEY not found in environment!")
+else:
+    genai.configure(api_key=GOOGLE_API_KEY)
+
 # We use Gemini 1.5 Flash for the fastest voice turnaround
 gen_model = genai.GenerativeModel('gemini-1.5-flash')
 
@@ -78,7 +86,12 @@ async def get_agent_response(
         yielded_index = 0
         
         async for chunk in stream:
-            delta = chunk.text or ""
+            try:
+                delta = chunk.text or ""
+            except Exception:
+                # Gemini sometimes errors on chunk.text if the chunk is not text (e.g. metadata or blocked content)
+                continue
+                
             full_raw += delta
             
             if '"response": "' in full_raw:
