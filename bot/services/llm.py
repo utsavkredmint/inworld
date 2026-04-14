@@ -44,9 +44,10 @@ async def get_agent_response(
 - Current Server Time: {time_str}
 - Conversation Started: {has_history}
 - RULE: If 'Conversation Started' is Yes, NEVER repeat the greeting intro (नमस्कार).
+- RULE: If the user says "Hello", "जी", "हां जी", or similar repetitive interjections mid-call, IGNORE them and repeat your last question/step instead of giving car info or intro.
 - RULE: Every response MUST be under 20 words.
 - RULE: Ask ONLY one question at a time.
-- RULE: If the user says "Hello", "जी", or similar, skip context-less greeting and proceed with the next step.
+- RULE: Strictly follow the booking flow (Date -> Time -> KM -> Confirm).
 """
         full_system_prompt = f"{base_prompt}\n{guardrails}\n{context_block}\nOutput valid JSON with key 'response' first."
 

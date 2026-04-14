@@ -240,16 +240,7 @@ async def plivo_stream(websocket: WebSocket):
         log.info("[GREET] Session init started...")
         await stt_connect()
 
-        # 🚀 BACKGROUND WARMUP: Pre-cache fillers for THIS specific agent voice while greeting is playing
-        async def _warmup_fillers_task():
-            fillers = ["जी", "ठीक है", "बिल्कुल", "जी बताइए", "जी समझ गई", "सही है", "ओके"]
-            for f in fillers:
-                await omnivoice_tts(f, voice_id=voice_id, language=agent_language)
-            log.info(f"[GREET] Filler variety pre-cached for voice: {voice_id}")
-
-        asyncio.create_task(_warmup_fillers_task())
-
-        # Warmup greeting
+        # 🚀 BACKGROUND WARMUP: Pre-cache greeting for THIS specific agent voice
         g_key = get_tts_cache_key(greeting, voice_id, agent_language)
         if g_key not in TTS_CACHE:
             log.info("[GREET] Pre-generating greeting...")
@@ -305,18 +296,20 @@ async def plivo_stream(websocket: WebSocket):
                 
                 log.info(f"[USER] {text}")
                 
-                # 🚀 ULTRA LATENCY: Reset sequence and trigger immediate filler
+                # 🚀 HELLO/JI FILTER: Ignore contextless interjections mid-call to prevent LLM confusion
+                # Indian users say "Hello" repeatedly if they feel a slight delay. We should stay in our flow.
+                clean_text = text.lower().strip().replace(".", "").replace("।", "").replace("!", "").replace("?", "")
+                if clean_text in ["hello", "जी", "हां जी", "सुनिए", "suniye", "hello?", "hello hello"] and len(history) > 1:
+                    log.info(f"[FILTER] Ignoring repetitive '{text}' to keep flow stable.")
+                    continue
+
+                # 🚀 ULTRA LATENCY: Reset sequence
                 async with playback_cond:
                     playback_index = 0
                     playback_cond.notify_all()
                 
-                # Pre-cached Variety Fillers (Sub-50ms Perception)
-                fillers = ["जी", "ठीक है", "बिल्कुल", "जी बताइए", "जी समझ गई", "सही है", "ओके"]
-                filler = random.choice(fillers)
-                asyncio.create_task(speak(filler, index=0, is_filler=True))
-                
-                # Actual response starts at index 1
-                result = await _process_text(text, target_lang=tts_language, start_index=1)
+                # Actual response starts at index 0 (No filler)
+                result = await _process_text(text, target_lang=tts_language, start_index=0)
                 if result == "TERMINATE": break
             except Exception: pass
 
