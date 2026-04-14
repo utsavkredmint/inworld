@@ -110,24 +110,25 @@ async def plivo_stream(websocket: WebSocket):
     is_initial_greeting = True
     
     # 🚀 SEQUENCE TRACKING: Ensures audio chunks play in order
+    current_turn_id = 0
     playback_index = 0
     playback_cond = asyncio.Condition()
 
     # Fillers & TTS Prep
     from services.tts import get_tts_cache_key, TTS_CACHE, update_tts_cache
 
-    async def speak(text, index=0, is_filler=False, language=None):
+    async def speak(text, index=0, turn_id=0, language=None):
         nonlocal is_speaking, playback_index
+        if turn_id != current_turn_id: return
+        
         if not stream_sid:
             log.info(f"[SPEAK] Waiting for SID to speak: {text[:20]}...")
             try:
-                # 🚀 REDUCE TIMEOUT: If SID isn't here in 1s, it's a major issue
                 await asyncio.wait_for(stream_ready_event.wait(), timeout=1.0)
             except asyncio.TimeoutError:
                 log.warning("[SPEAK] Timeout waiting for SID. Proceeding anyway.")
             
         is_speaking = True
-        interrupt_event.clear()
         target_tts_lang = language or tts_language
         prepared = prepare_for_tts(text)
         cache_key = get_tts_cache_key(prepared, voice_id, target_tts_lang)
@@ -137,11 +138,13 @@ async def plivo_stream(websocket: WebSocket):
             audio = TTS_CACHE[cache_key]
             log.info(f"[SPEAK] Cache HIT: {text[:40]} | Bytes: {len(audio)}")
         else:
+            if turn_id != current_turn_id: return
             log.info(f"[SPEAK] Generating TTS: {text[:40]}")
-            # 🚀 PARALLEL SYNTHESIS: Start GPU work immediately without waiting for our turn to play
             audio = await omnivoice_tts(text, voice_id=voice_id, language=target_tts_lang)
             if audio:
                 update_tts_cache(text, audio, voice_id=voice_id, language=target_tts_lang)
+
+        if turn_id != current_turn_id: return
 
         if not audio:
             log.warning(f"[SPEAK] No audio generated for: {text[:40]}")
@@ -152,21 +155,21 @@ async def plivo_stream(websocket: WebSocket):
                 playback_cond.notify_all()
             return
 
-        # 🚀 SEQUENCE SYNC: Wait for our turn to play
+        # 🚀 SEQUENCE SYNC: Wait for our turn within the current Turn ID
         async with playback_cond:
-            log.info(f"[SPEAK] Chunk {index} ready. Waiting for turn (Current: {playback_index})")
-            while playback_index < index and not interrupt_event.is_set():
+            log.info(f"[SPEAK] T[{turn_id}] Chunk {index} ready. Waiting (Current: {playback_index})")
+            while playback_index < index and turn_id == current_turn_id:
                 await playback_cond.wait()
             
-            if interrupt_event.is_set() and index >= playback_index:
-                log.info(f"[SPEAK] Chunk {index} cancelled by interrupt")
+            if turn_id != current_turn_id:
                 return
 
-            # 🚀 CHUNKING: Send audio in small parts to prevent Plivo overflow
             chunk_size = 320 # 40ms
             try:
                 for i in range(0, len(audio), chunk_size):
-                    if interrupt_event.is_set(): break
+                    if turn_id != current_turn_id: break
+                    if websocket.client_state == WebSocketDisconnect: break 
+                    
                     chunk = audio[i:i+chunk_size]
                     msg = {
                         "event": "playAudio",
@@ -182,21 +185,13 @@ async def plivo_stream(websocket: WebSocket):
             except Exception as e:
                 log.error(f"[STREAM] WS Send Error: {e}")
 
-        # Wait for actual playback to finish (heuristic)
-        duration = len(audio) / 8000
-        try:
-            await asyncio.wait_for(interrupt_event.wait(), timeout=duration)
-        except asyncio.TimeoutError: pass
-        if interrupt_event.is_set():
-            try: await websocket.send_text(json.dumps({"event": "clearAudio", "streamSid": stream_sid, "streamId": stream_sid}))
-            except: pass
-        # 🚀 SEQUENCE SYNC: Move to next index
+        # 🚀 FINAL SYNC: Increment index only if turn matches
         async with playback_cond:
-            playback_index += 1
-            playback_cond.notify_all()
+            if turn_id == current_turn_id:
+                playback_index += 1
+                playback_cond.notify_all()
 
         is_speaking = False
-        vad.reset()
 
     async def _process_text(text, target_lang=None, start_index=0):
         nonlocal call_state, last_bot_response, last_stock, playback_index
@@ -210,13 +205,15 @@ async def plivo_stream(websocket: WebSocket):
         history.append({"role": "user", "content": text})
 
         chunk_idx = start_index
+        t_id = current_turn_id
         async for chunk, is_final, metadata in get_agent_response(
             call_state, last_bot_response, history, text, local_call_data, last_stock,
             system_prompt_override=system_prompt_override, is_generic=is_generic_agent
         ):
+            if t_id != current_turn_id: break
             if chunk:
                 full_text += chunk
-                asyncio.create_task(speak(chunk, index=chunk_idx, language=target_lang))
+                asyncio.create_task(speak(chunk, index=chunk_idx, turn_id=t_id, language=target_lang))
                 chunk_idx += 1
             if is_final: last_metadata = metadata
 
@@ -297,18 +294,23 @@ async def plivo_stream(websocket: WebSocket):
                 log.info(f"[USER] {text}")
                 
                 # 🚀 HELLO/JI FILTER: Ignore contextless interjections mid-call to prevent LLM confusion
-                # Indian users say "Hello" repeatedly if they feel a slight delay. We should stay in our flow.
                 clean_text = text.lower().strip().replace(".", "").replace("।", "").replace("!", "").replace("?", "")
                 if clean_text in ["hello", "जी", "हां जी", "सुनिए", "suniye", "hello?", "hello hello"] and len(history) > 1:
                     log.info(f"[FILTER] Ignoring repetitive '{text}' to keep flow stable.")
                     continue
 
-                # 🚀 ULTRA LATENCY: Reset sequence
+                # 🚀 NEW TURN: Increment turn_id and reset index
                 async with playback_cond:
+                    current_turn_id += 1
                     playback_index = 0
+                    interrupt_event.set() # Stop any active speaker loops
                     playback_cond.notify_all()
                 
-                # Actual response starts at index 0 (No filler)
+                # Allow a small gap for old tasks to detect current_turn_id change
+                await asyncio.sleep(0.05) 
+                interrupt_event.clear()
+
+                # Actual response starts at index 0
                 result = await _process_text(text, target_lang=tts_language, start_index=0)
                 if result == "TERMINATE": break
             except Exception: pass
