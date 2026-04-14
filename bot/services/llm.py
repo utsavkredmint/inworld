@@ -3,24 +3,18 @@ import logging
 import asyncio
 import os
 from typing import AsyncGenerator
-import google.generativeai as genai
+from openai import AsyncOpenAI
 from dotenv import load_dotenv
 from datetime import datetime
 
 log = logging.getLogger(__name__)
 
-# Ensure .env is loaded directly for Gemini configuration
+# Ensure .env is loaded directly
 load_dotenv(override=True)
-GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
-if not GOOGLE_API_KEY:
-    log.error("[LLM] GOOGLE_API_KEY not found in environment!")
-else:
-    log.info(f"[LLM] Initializing Gemini with key: {GOOGLE_API_KEY[:4]}...{GOOGLE_API_KEY[-4:]}")
-    genai.configure(api_key=GOOGLE_API_KEY)
-
-# We use Gemini 1.5 Flash for the fastest voice turnaround
-gen_model = genai.GenerativeModel('gemini-1.5-flash')
+# Initialize OpenAI Client
+client = AsyncOpenAI(api_key=OPENAI_API_KEY)
 
 # Default fallback prompt if an agent has NO custom prompt in DB
 DEFAULT_SYSTEM_PROMPT = """You are a helpful Hindi voice assistant.
@@ -39,7 +33,7 @@ async def get_agent_response(
     is_generic=False
 ) -> AsyncGenerator:
     """
-    STREAMS the Gemini response. 
+    STREAMS the OpenAI response. 
     Yields: (text_chunk, is_final, metadata_if_final)
     """
     try:
@@ -62,46 +56,35 @@ async def get_agent_response(
 """
         full_system_prompt = f"{base_prompt}\n{guardrails}\n{context_block}\nReturn JSON: {{\"response\": \"...\", \"state\": \"...\", \"terminate\": false}}"
 
-        # 3. Format History for Gemini (Last 3 turns)
-        messages = [{"role": "user", "parts": [full_system_prompt]}] # System instructions as first user turn for Flash
+        messages = [{"role": "system", "content": full_system_prompt}]
         for h in history[-3:]:
-            role = "model" if h["role"] == "assistant" else "user"
-            messages.append({"role": role, "parts": [h["content"]]})
+             messages.append({"role": h["role"], "content": h["content"]})
         
-        messages.append({"role": "user", "parts": [user_text]})
+        messages.append({"role": "user", "content": user_text})
 
-        # 🚀 STREAM from Gemini 1.5 Flash
-        # Gemini Flash is extremely fast, comparable to Groq
-        chat = gen_model.start_chat(history=messages[:-1])
-        stream = await chat.send_message_async(
-            messages[-1]["parts"][0],
+        # 🚀 STREAM from OpenAI (GPT-4o-mini)
+        stream = await client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=messages,
+            temperature=0,
+            max_tokens=150,
             stream=True,
-            generation_config=genai.GenerationConfig(
-                response_mime_type="application/json",
-                temperature=0,
-                max_output_tokens=150
-            )
+            response_format={"type": "json_object"}
         )
 
         full_raw = ""
         yielded_index = 0
         
         async for chunk in stream:
-            try:
-                delta = chunk.text or ""
-            except Exception:
-                # Gemini sometimes errors on chunk.text if the chunk is not text (e.g. metadata or blocked content)
-                continue
-                
+            delta = chunk.choices[0].delta.content or ""
             full_raw += delta
             
             if '"response": "' in full_raw:
-                start_marker = '"response": "'
-                start_idx = full_raw.find(start_marker) + len(start_marker)
-                current_content = full_raw[start_idx:]
+                start_ptr = full_raw.find('"response": "') + 13
+                text_so_far = full_raw[start_ptr:]
                 
-                end_idx = current_content.find('"')
-                text_so_far = current_content if end_idx == -1 else current_content[:end_idx]
+                if '"' in text_so_far:
+                    text_so_far = text_so_far[:text_so_far.find('"')]
                 
                 new_text = text_so_far[yielded_index:]
                 
@@ -112,43 +95,35 @@ async def get_agent_response(
                      if any('\u0900'<=c<='\u097f' or 'a'<=c.lower()<='z' for c in chunk_to_yield):
                          yield (chunk_to_yield + " ", False, None)
                      yielded_index += len(chunk_to_yield) + 1
-                     continue
 
-                # Yield at sentence boundaries (full stop, question mark, etc.)
-                if any(char in new_text for char in ["।", ".", "?", "!", "\n"]):
-                    last_p = -1
-                    for i, char in enumerate(new_text):
-                        if char in ["।", ".", "?", "!", "\n"]:
-                            last_p = i
+                # 🚀 CONTINUITY: Yield after punctuation for later chunks
+                elif yielded_index > 0:
+                    punct_marks = [".", "?", "!", "।", ",", "\n"]
+                    found_mark = -1
+                    for mark in punct_marks:
+                        idx = new_text.rfind(mark)
+                        if idx > found_mark: found_mark = idx
                     
-                    if last_p != -1:
-                        chunk_to_yield = new_text[:last_p+1].strip()
-                        # 🔥 FILTER: Ensure it has Hindi or English characters
-                        if any('a'<=c.lower()<='z' or '\u0900'<=c<='\u097f' for c in chunk_to_yield):
+                    if found_mark != -1:
+                        chunk_to_yield = new_text[:found_mark+1]
+                        if any('\u0900'<=c<='\u097f' or 'a'<=c.lower()<='z' for c in chunk_to_yield):
                             yield (chunk_to_yield, False, None)
-                        yielded_index += last_p + 1
+                            yielded_index += len(chunk_to_yield)
 
-        # End of stream: Final residue extraction
-        data = json.loads(full_raw)
-        response = data.get("response", "")
-        
-        # Check if we have un-yielded text from the final response
-        residual = response[yielded_index:].strip()
-        if residual and any('a'<=c.lower()<='z' or '\u0900'<=c<='\u097f' for c in residual):
-            yield (residual, False, None)
-
-        next_state = data.get("state", state)
-        terminate = data.get("terminate", False)
-        stock = data.get("stock", {})
-
-        # Merge stock safely
-        updated_stock = current_stock.copy()
-        if stock:
-            for k, v in stock.items():
-                updated_stock[k] = v
-
-        yield (None, True, (response, next_state, terminate, updated_stock))
+        # 🚀 FINAL: Clean up and send metadata
+        try:
+            final_json = json.loads(full_raw)
+            clean_response = final_json.get("response", "")
+            final_chunk = clean_response[yielded_index:].strip()
+            
+            if final_chunk:
+                yield (final_chunk + " ", True, final_json)
+            else:
+                yield ("", True, final_json)
+        except Exception as e:
+            log.error(f"[LLM] Final Parse Error: {e} | Raw: {full_raw}")
+            yield ("", True, {"response": "", "state": state, "terminate": False})
 
     except Exception as e:
         log.error(f"LLM error: {e}")
-        yield ("जी, समझ नहीं आया।", True, ("जी, समझ नहीं आया।", state, False, current_stock))
+        yield ("जी, समझ नहीं आया।", True, {"response": "error", "state": state, "terminate": False})
