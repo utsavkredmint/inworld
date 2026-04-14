@@ -11,3 +11,4 @@ pydub
 static-ffmpeg
 scipy
 git+https://github.com/k2-fsa/OmniVoice.git
+openai

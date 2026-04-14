@@ -1,18 +1,23 @@
 import json
 import logging
-from groq import AsyncGroq
-from config import GROQ_API_KEY
+import asyncio
+from typing import AsyncGenerator
+import google.generativeai as genai
+from config import GOOGLE_API_KEY
 from datetime import datetime
 
 log = logging.getLogger(__name__)
-groq_client = AsyncGroq(api_key=GROQ_API_KEY)
+
+# Configure Gemini
+genai.configure(api_key=GOOGLE_API_KEY)
+# We use Gemini 1.5 Flash for the fastest voice turnaround
+gen_model = genai.GenerativeModel('gemini-1.5-flash')
 
 # Default fallback prompt if an agent has NO custom prompt in DB
 DEFAULT_SYSTEM_PROMPT = """You are a helpful Hindi voice assistant.
 Rules: Hindi only. < 15 words. Natural flow.
 Do NOT restart greetings if the user says "Hello" mid-conversation; acknowledge and continue.
 If ending, set terminate: true."""
-
 
 async def get_agent_response(
     state,
@@ -23,13 +28,13 @@ async def get_agent_response(
     current_stock,
     system_prompt_override=None,
     is_generic=False
-):
+) -> AsyncGenerator:
     """
-    STREAMS the LLM response. 
+    STREAMS the Gemini response. 
     Yields: (text_chunk, is_final, metadata_if_final)
     """
     try:
-        # 1. Base System Prompt (Truly Dynamic)
+        # 1. Base System Prompt
         base_prompt = system_prompt_override if system_prompt_override and system_prompt_override.strip() else DEFAULT_SYSTEM_PROMPT
         
         # 2. Add Session Context (Lean)
@@ -44,33 +49,36 @@ async def get_agent_response(
 - IGNORE contextless "Hello/Ji" - stick to the current question.
 - Max 20 words. One question at a time.
 - FLOW: Date -> Time -> KM -> Confirm.
+- Output MUST be valid JSON.
 """
         full_system_prompt = f"{base_prompt}\n{guardrails}\n{context_block}\nReturn JSON: {{\"response\": \"...\", \"state\": \"...\", \"terminate\": false}}"
 
-        messages = [{"role": "system", "content": full_system_prompt}]
-        
-        # 3. Add History (Last 3 turns for lean context)
+        # 3. Format History for Gemini (Last 3 turns)
+        messages = [{"role": "user", "parts": [full_system_prompt]}] # System instructions as first user turn for Flash
         for h in history[-3:]:
-            messages.append({"role": h["role"], "content": h["content"]})
+            role = "model" if h["role"] == "assistant" else "user"
+            messages.append({"role": role, "parts": [h["content"]]})
         
-        # 4. Final User Query
-        messages.append({"role": "user", "content": user_text})
+        messages.append({"role": "user", "parts": [user_text]})
 
-        # 🚀 STREAM from Groq
-        stream = await groq_client.chat.completions.create(
-            model="llama-3.1-8b-instant",
-            messages=messages,
-            max_tokens=150,
-            temperature=0,
+        # 🚀 STREAM from Gemini 1.5 Flash
+        # Gemini Flash is extremely fast, comparable to Groq
+        chat = gen_model.start_chat(history=messages[:-1])
+        stream = await chat.send_message_async(
+            messages[-1]["parts"][0],
             stream=True,
-            response_format={"type": "json_object"}
+            generation_config=genai.GenerationConfig(
+                response_mime_type="application/json",
+                temperature=0,
+                max_output_tokens=150
+            )
         )
 
         full_raw = ""
         yielded_index = 0
         
         async for chunk in stream:
-            delta = chunk.choices[0].delta.content or ""
+            delta = chunk.text or ""
             full_raw += delta
             
             if '"response": "' in full_raw:
@@ -83,10 +91,10 @@ async def get_agent_response(
                 
                 new_text = text_so_far[yielded_index:]
                 
-                # 🚀 CONTINUITY: Yield FIRST chunk (20 words) for more stable speech start
+                # 🚀 BALANCE: Yield FIRST chunk (12 words) for natural speech flow
                 words = new_text.strip().split()
-                if yielded_index == 0 and len(words) >= 20:
-                     chunk_to_yield = " ".join(words[:20])
+                if yielded_index == 0 and len(words) >= 12:
+                     chunk_to_yield = " ".join(words[:12])
                      if any('\u0900'<=c<='\u097f' or 'a'<=c.lower()<='z' for c in chunk_to_yield):
                          yield (chunk_to_yield + " ", False, None)
                      yielded_index += len(chunk_to_yield) + 1
