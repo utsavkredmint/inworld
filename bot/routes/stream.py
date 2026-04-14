@@ -118,7 +118,7 @@ async def plivo_stream(websocket: WebSocket):
     from services.tts import get_tts_cache_key, TTS_CACHE, update_tts_cache
 
     async def speak(text, index=0, turn_id=0, language=None):
-        nonlocal is_speaking, playback_index
+        nonlocal is_speaking, playback_index, current_turn_id
         try:
             if turn_id != current_turn_id: return
             
@@ -194,7 +194,7 @@ async def plivo_stream(websocket: WebSocket):
             is_speaking = False
 
     async def _process_text(text, target_lang=None, start_index=0):
-        nonlocal call_state, last_bot_response, last_stock, playback_index
+        nonlocal call_state, last_bot_response, last_stock, playback_index, current_turn_id
         
         full_text = ""
         last_metadata = None
@@ -274,6 +274,7 @@ async def plivo_stream(websocket: WebSocket):
         except Exception: pass
 
     async def transcript_loop():
+        nonlocal current_turn_id, playback_index
         while True:
             try:
                 text = await get_final_transcript(timeout=5)
