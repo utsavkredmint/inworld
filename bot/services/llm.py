@@ -83,10 +83,10 @@ async def get_agent_response(
                 
                 new_text = text_so_far[yielded_index:]
                 
-                # 🚀 BALANCED CONTINUITY: Yield FIRST chunk (12 words) for stable start
+                # 🚀 TURBO CONTINUITY: Yield FIRST chunk (6 words) for instant response
                 words = new_text.strip().split()
-                if yielded_index == 0 and len(words) >= 12:
-                     # Find character position of the end of the 12th word in the original text_so_far
+                if yielded_index == 0 and len(words) >= 6:
+                     # Find exact character position of the end of the 6th word
                      word_count = 0
                      pos = 0
                      in_word = False
@@ -98,8 +98,8 @@ async def get_agent_response(
                          else:
                              in_word = False
                          
-                         if word_count == 12:
-                             # Continue until the end of this current word
+                         if word_count == 6:
+                             # Include characters until the next space or boundary
                              while i+1 < len(text_so_far) and text_so_far[i+1].strip():
                                  i += 1
                              pos = i + 1

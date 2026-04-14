@@ -114,12 +114,13 @@ async def plivo_stream(websocket: WebSocket):
     playback_index = 0
     playback_cond = asyncio.Condition()
     turn_in_progress = False
+    pending_audio_tasks = 0
 
     # Fillers & TTS Prep
     from services.tts import get_tts_cache_key, TTS_CACHE, update_tts_cache
 
     async def speak(text, index=0, turn_id=0, language=None):
-        nonlocal is_speaking, playback_index, current_turn_id
+        nonlocal is_speaking, playback_index, current_turn_id, pending_audio_tasks
         try:
             if turn_id != current_turn_id: return
             
@@ -193,6 +194,7 @@ async def plivo_stream(websocket: WebSocket):
                     playback_cond.notify_all()
         finally:
             is_speaking = False
+            pending_audio_tasks = max(0, pending_audio_tasks - 1)
 
     async def _process_text(text, target_lang=None, start_index=0):
         nonlocal call_state, last_bot_response, last_stock, playback_index, current_turn_id, turn_in_progress
@@ -222,6 +224,7 @@ async def plivo_stream(websocket: WebSocket):
                 if chunk:
                     full_text += chunk
                     # 🚀 PARALLEL GPU: Fire and forget each chunk
+                    pending_audio_tasks += 1
                     asyncio.create_task(speak(chunk, index=chunk_idx, turn_id=t_id, language=target_lang))
                     chunk_idx += 1
                 
@@ -334,7 +337,7 @@ async def plivo_stream(websocket: WebSocket):
     
     # 🚀 GRACEFUL TERMINATION: Wait for LLM thought AND audio playback to finish
     # Otherwise the call cuts off during gaps between sentences
-    while turn_in_progress or is_speaking:
+    while turn_in_progress or is_speaking or pending_audio_tasks > 0:
         await asyncio.sleep(0.1)
         
     await stt_disconnect()
