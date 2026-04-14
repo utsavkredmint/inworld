@@ -239,6 +239,16 @@ async def plivo_stream(websocket: WebSocket):
         nonlocal is_initial_greeting
         log.info("[GREET] Session init started...")
         await stt_connect()
+
+        # 🚀 BACKGROUND WARMUP: Pre-cache fillers for THIS specific agent voice while greeting is playing
+        async def _warmup_fillers_task():
+            fillers = ["जी", "ठीक है", "बिल्कुल", "जी बताइए", "जी समझ गई", "सही है", "ओके"]
+            for f in fillers:
+                await omnivoice_tts(f, voice_id=voice_id, language=agent_language)
+            log.info(f"[GREET] Filler variety pre-cached for voice: {voice_id}")
+
+        asyncio.create_task(_warmup_fillers_task())
+
         # Warmup greeting
         g_key = get_tts_cache_key(greeting, voice_id, agent_language)
         if g_key not in TTS_CACHE:
