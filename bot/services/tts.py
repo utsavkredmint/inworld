@@ -281,7 +281,7 @@ async def omnivoice_tts(text, voice_id=None, language="hindi", num_inference_ste
             ref_audio=ref_audio,
             ref_text=ref_text,
             language=language or "hindi",
-            num_inference_steps=num_inference_steps
+            num_inference_steps=10 # 🚀 TURBO: 10 steps for 200ms generation on RTX 6000
         ))
         
         if not audio_list or len(audio_list) == 0:

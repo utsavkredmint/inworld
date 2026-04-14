@@ -1,26 +1,18 @@
 import json
 import logging
-import asyncio
-import os
-from typing import AsyncGenerator
-from openai import AsyncOpenAI
-from dotenv import load_dotenv
+from groq import AsyncGroq
+from config import GROQ_API_KEY
 from datetime import datetime
 
 log = logging.getLogger(__name__)
-
-# Ensure .env is loaded directly
-load_dotenv(override=True)
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-
-# Initialize OpenAI Client
-client = AsyncOpenAI(api_key=OPENAI_API_KEY)
+groq_client = AsyncGroq(api_key=GROQ_API_KEY)
 
 # Default fallback prompt if an agent has NO custom prompt in DB
 DEFAULT_SYSTEM_PROMPT = """You are a helpful Hindi voice assistant.
 Rules: Hindi only. < 15 words. Natural flow.
 Do NOT restart greetings if the user says "Hello" mid-conversation; acknowledge and continue.
 If ending, set terminate: true."""
+
 
 async def get_agent_response(
     state,
@@ -31,13 +23,13 @@ async def get_agent_response(
     current_stock,
     system_prompt_override=None,
     is_generic=False
-) -> AsyncGenerator:
+):
     """
-    STREAMS the OpenAI response. 
+    STREAMS the LLM response. 
     Yields: (text_chunk, is_final, metadata_if_final)
     """
     try:
-        # 1. Base System Prompt
+        # 1. Base System Prompt (Truly Dynamic)
         base_prompt = system_prompt_override if system_prompt_override and system_prompt_override.strip() else DEFAULT_SYSTEM_PROMPT
         
         # 2. Add Session Context (Lean)
@@ -52,22 +44,24 @@ async def get_agent_response(
 - IGNORE contextless "Hello/Ji" - stick to the current question.
 - Max 20 words. One question at a time.
 - FLOW: Date -> Time -> KM -> Confirm.
-- Output MUST be valid JSON.
 """
         full_system_prompt = f"{base_prompt}\n{guardrails}\n{context_block}\nReturn JSON: {{\"response\": \"...\", \"state\": \"...\", \"terminate\": false}}"
 
         messages = [{"role": "system", "content": full_system_prompt}]
-        for h in history[-3:]:
-             messages.append({"role": h["role"], "content": h["content"]})
         
+        # 3. Add History (Last 3 turns for lean context)
+        for h in history[-3:]:
+            messages.append({"role": h["role"], "content": h["content"]})
+        
+        # 4. Final User Query
         messages.append({"role": "user", "content": user_text})
 
-        # 🚀 STREAM from OpenAI (GPT-4o-mini)
-        stream = await client.chat.completions.create(
-            model="gpt-4o-mini",
+        # 🚀 STREAM from Groq
+        stream = await groq_client.chat.completions.create(
+            model="llama-3.1-8b-instant",
             messages=messages,
-            temperature=0,
             max_tokens=150,
+            temperature=0,
             stream=True,
             response_format={"type": "json_object"}
         )
@@ -80,50 +74,59 @@ async def get_agent_response(
             full_raw += delta
             
             if '"response": "' in full_raw:
-                start_ptr = full_raw.find('"response": "') + 13
-                text_so_far = full_raw[start_ptr:]
+                start_marker = '"response": "'
+                start_idx = full_raw.find(start_marker) + len(start_marker)
+                current_content = full_raw[start_idx:]
                 
-                if '"' in text_so_far:
-                    text_so_far = text_so_far[:text_so_far.find('"')]
+                end_idx = current_content.find('"')
+                text_so_far = current_content if end_idx == -1 else current_content[:end_idx]
                 
                 new_text = text_so_far[yielded_index:]
                 
-                # 🚀 BALANCE: Yield FIRST chunk (12 words) for natural speech flow
+                # 🚀 TURBO CONTINUITY: Yield FIRST chunk (6 words) for instant start
                 words = new_text.strip().split()
-                if yielded_index == 0 and len(words) >= 12:
-                     chunk_to_yield = " ".join(words[:12])
+                if yielded_index == 0 and len(words) >= 6:
+                     chunk_to_yield = " ".join(words[:6])
                      if any('\u0900'<=c<='\u097f' or 'a'<=c.lower()<='z' for c in chunk_to_yield):
                          yield (chunk_to_yield + " ", False, None)
                      yielded_index += len(chunk_to_yield) + 1
+                     continue
 
-                # 🚀 CONTINUITY: Yield after punctuation for later chunks
-                elif yielded_index > 0:
-                    punct_marks = [".", "?", "!", "।", ",", "\n"]
-                    found_mark = -1
-                    for mark in punct_marks:
-                        idx = new_text.rfind(mark)
-                        if idx > found_mark: found_mark = idx
+                # Yield at sentence boundaries (full stop, question mark, etc.)
+                if any(char in new_text for char in ["।", ".", "?", "!", "\n"]):
+                    last_p = -1
+                    for i, char in enumerate(new_text):
+                        if char in ["।", ".", "?", "!", "\n"]:
+                            last_p = i
                     
-                    if found_mark != -1:
-                        chunk_to_yield = new_text[:found_mark+1]
-                        if any('\u0900'<=c<='\u097f' or 'a'<=c.lower()<='z' for c in chunk_to_yield):
+                    if last_p != -1:
+                        chunk_to_yield = new_text[:last_p+1].strip()
+                        # 🔥 FILTER: Ensure it has Hindi or English characters
+                        if any('a'<=c.lower()<='z' or '\u0900'<=c<='\u097f' for c in chunk_to_yield):
                             yield (chunk_to_yield, False, None)
-                            yielded_index += len(chunk_to_yield)
+                        yielded_index += last_p + 1
 
-        # 🚀 FINAL: Clean up and send metadata
-        try:
-            final_json = json.loads(full_raw)
-            clean_response = final_json.get("response", "")
-            final_chunk = clean_response[yielded_index:].strip()
-            
-            if final_chunk:
-                yield (final_chunk + " ", True, final_json)
-            else:
-                yield ("", True, final_json)
-        except Exception as e:
-            log.error(f"[LLM] Final Parse Error: {e} | Raw: {full_raw}")
-            yield ("", True, {"response": "", "state": state, "terminate": False})
+        # End of stream: Final residue extraction
+        data = json.loads(full_raw)
+        response = data.get("response", "")
+        
+        # Check if we have un-yielded text from the final response
+        residual = response[yielded_index:].strip()
+        if residual and any('a'<=c.lower()<='z' or '\u0900'<=c<='\u097f' for c in residual):
+            yield (residual, False, None)
+
+        next_state = data.get("state", state)
+        terminate = data.get("terminate", False)
+        stock = data.get("stock", {})
+
+        # Merge stock safely
+        updated_stock = current_stock.copy()
+        if stock:
+            for k, v in stock.items():
+                updated_stock[k] = v
+
+        yield (None, True, (response, next_state, terminate, updated_stock))
 
     except Exception as e:
         log.error(f"LLM error: {e}")
-        yield ("जी, समझ नहीं आया।", True, {"response": "error", "state": state, "terminate": False})
+        yield ("जी, समझ नहीं आया।", True, ("जी, समझ नहीं आया।", state, False, current_stock))
